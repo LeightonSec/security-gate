@@ -4,7 +4,15 @@ Static security gate scanner for Python security projects. Catches the violation
 
 Each finding maps directly to a checklist gate item. The scanner auto-populates what it can find statically; human-judgement items remain for manual sign-off.
 
-Aligned with **OWASP SAMM v2** (Implementation/Verification), **NIST SSDF SP 800-218** (PW and RV practices), and **NIST SP 800-218A** (AI model provenance and supply chain — the July 2024 AI-specific SSDF profile).
+## Framework alignment
+
+| Framework | Version | Date | Coverage |
+|-----------|---------|------|----------|
+| OWASP SAMM | v2.0 | February 2020 (actively maintained) | Implementation/Verification functions |
+| NIST SSDF | SP 800-218 v1.1 | February 2022 | PW and RV practices (v1.2 IPD December 2025, not yet final) |
+| NIST SSDF AI Profile | SP 800-218A | July 26, 2024 | AI model provenance and supply chain |
+| OWASP Top 10 | 2025 | January 2026 final | A03 Injection, A05 Security Misconfiguration, A06 Vulnerable Components |
+| CIS Supply Chain | Software Supply Chain Security Guide v1.0 | 2022 | Source code, build pipeline, dependency controls |
 
 ## What it catches
 
@@ -91,6 +99,30 @@ These gate items require human sign-off — documented in every report's manual 
 - Data retention policy defined and implemented
 - Test fixtures confirmed synthetic (no real IOCs/IPs/payloads)
 
+## Known limitations
+
+security-gate is a SAST tool. It catches what can be detected by reading source files statically. These violation patterns are outside its current scope:
+
+| Limitation | What it means | How to address |
+|------------|---------------|----------------|
+| Runtime behaviour | No sandboxed execution or network traffic monitoring | Wireshark/Little Snitch for outbound; runtime sandbox (v1.1 stretch goal) |
+| Transitive dependencies | Only direct deps scanned, not the full tree | `pip-audit` or `safety` for transitive SCA |
+| Git history | Working tree only; committed secrets in history not caught | `gitleaks --source=git` on full history (v1.1 roadmap) |
+| Container/environment layer | No Dockerfile or docker-compose scanning | hadolint integration (v1.1 roadmap, `iac` profile) |
+| Tamper detection | Reports are not signed; integrity relies on CI enforcement | Signed gate reports (v1.1 roadmap) |
+| Import-time side effects | Statically undetectable | Requires sandboxed execution |
+| Unknown violation patterns | Only catches patterns found manually first | Submit findings as issues; patterns are added after real-world discovery |
+
+### Where security-gate sits in the testing stack
+
+```
+SAST (← you are here)  →  SCA  →  DAST  →  IAST  →  Fuzzing
+static source analysis     deps    running   instrumented  boundary
+                           tree    app        runtime       inputs
+```
+
+security-gate covers the SAST layer and a subset of SCA (direct deps, no transitive tree). The v1.1 roadmap adds full SCA. DAST, IAST, and fuzzing remain out of scope.
+
 ## Roadmap
 
 v1.0 ships with a flat scanner that runs all rules against any Python project. v1.1 introduces profile-based scanning — the tool auto-detects project type and applies the relevant rule set.
@@ -103,6 +135,8 @@ v1.0 ships with a flat scanner that runs all rules against any Python project. v
 | [#4](https://github.com/LeightonSec/security-gate/issues/4) | `iac` | Terraform/Dockerfile/Ansible — hardcoded creds, public exposure patterns |
 
 Detection is automatic — no `--profile` flag needed. The tool reads requirements.txt and file extensions to classify, then applies the matching rule set.
+
+**v1.1 also adds:** full transitive dependency tree scanning, `gitleaks --source=git` on full history, Dockerfile scanning (hadolint integration), signed gate reports, and per-repo findings persistence.
 
 ## Origin
 

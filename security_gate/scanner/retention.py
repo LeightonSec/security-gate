@@ -8,7 +8,6 @@ _WRITE_PATTERNS = [
     re.compile(r"conn\.execute\s*\(\s*['\"]?\s*INSERT", re.IGNORECASE),
     re.compile(r"cursor\.execute\s*\(\s*['\"]?\s*INSERT", re.IGNORECASE),
     re.compile(r"db\.execute\s*\(\s*['\"]?\s*INSERT", re.IGNORECASE),
-    re.compile(r"\.add\s*\(.*\)\s*$"),           # SQLAlchemy session.add()
     re.compile(r"session\.add\s*\("),
     re.compile(r"json\.dump\s*\(.*open\s*\("),   # json.dump to file
     re.compile(r"with open\s*\(.*['\"]a['\"]"),  # append mode file writes
