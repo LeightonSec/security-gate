@@ -1,0 +1,67 @@
+from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
+
+
+class Severity(str, Enum):
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    INFO = "INFO"
+
+
+# Severity → numeric for sorting
+_SEVERITY_ORDER = {
+    Severity.CRITICAL: 0,
+    Severity.HIGH: 1,
+    Severity.MEDIUM: 2,
+    Severity.LOW: 3,
+    Severity.INFO: 4,
+}
+
+
+@dataclass
+class Finding:
+    scanner: str
+    severity: Severity
+    file: str
+    line: int
+    match: str
+    detail: str
+    checklist_item: str
+
+    def sort_key(self) -> int:
+        return _SEVERITY_ORDER.get(self.severity, 99)
+
+    def to_dict(self) -> dict:
+        return {
+            "scanner": self.scanner,
+            "severity": self.severity.value,
+            "file": self.file,
+            "line": self.line,
+            "match": self.match,
+            "detail": self.detail,
+            "checklist_item": self.checklist_item,
+        }
+
+
+class BaseScanner:
+    name: str = "base"
+
+    def scan(self, root: Path) -> list[Finding]:
+        raise NotImplementedError
+
+    def _py_files(self, root: Path) -> list[Path]:
+        return [
+            p for p in root.rglob("*.py")
+            if ".git" not in p.parts
+            and "__pycache__" not in p.parts
+            and "node_modules" not in p.parts
+        ]
+
+    def _rel(self, root: Path, path: Path) -> str:
+        try:
+            return str(path.relative_to(root))
+        except ValueError:
+            return str(path)

@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# security-gate specific
+*.db
+*.sqlite
+security-gate-report.md
+security-gate-report.json
+security-gate-sbom.cdx.json
