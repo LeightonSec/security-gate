@@ -102,3 +102,67 @@ def test_gate_passed_on_medium_only(tmp_path):
         file="x.py", line=1, match="x", detail="test", checklist_item="test",
     )]
     assert gate_passed(findings) is True
+
+
+# --- DepsScanner: pyproject.toml support ---
+
+def test_deps_pyproject_unpinned_flagged(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\ndependencies = [\"requests>=2.28.0\", \"click\"]\n"
+    )
+    findings = DepsScanner().scan(tmp_path)
+    medium = [f for f in findings if f.severity == Severity.MEDIUM]
+    names = [f.match for f in medium]
+    assert any("requests" in n for n in names)
+    assert any("click" in n for n in names)
+
+
+def test_deps_pyproject_pinned_no_medium(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\ndependencies = [\"requests==2.31.0\"]\n"
+    )
+    findings = DepsScanner().scan(tmp_path)
+    assert not any(f.severity == Severity.MEDIUM for f in findings)
+
+
+def test_deps_pyproject_no_req_file_fires_high(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\ndependencies = [\"requests>=2.28.0\"]\n"
+    )
+    findings = DepsScanner().scan(tmp_path)
+    high = [f for f in findings if f.severity == Severity.HIGH]
+    assert len(high) == 1
+    assert "pyproject.toml" in high[0].file
+
+
+def test_deps_pyproject_with_req_file_no_double_high(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\ndependencies = [\"requests>=2.28.0\"]\n"
+    )
+    (tmp_path / "requirements.txt").write_text("requests>=2.28.0\n")
+    findings = DepsScanner().scan(tmp_path)
+    # requirements.txt scan fires HIGH for missing hashes; pyproject scan must not add a second
+    high = [f for f in findings if f.severity == Severity.HIGH]
+    assert len(high) == 1
+
+
+def test_deps_pyproject_optional_deps_scanned(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\ndependencies = []\n"
+        "[project.optional-dependencies]\ndev = [\"pytest>=7.0\", \"ruff\"]\n"
+    )
+    findings = DepsScanner().scan(tmp_path)
+    medium = [f for f in findings if f.severity == Severity.MEDIUM]
+    names = [f.match for f in medium]
+    assert any("pytest" in n for n in names)
+    assert any("ruff" in n for n in names)
+
+
+def test_deps_pyproject_lockfile_suppresses_high(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        "[project]\ndependencies = [\"requests>=2.28.0\"]\n"
+    )
+    (tmp_path / "uv.lock").write_text("# uv lockfile\n")
+    findings = DepsScanner().scan(tmp_path)
+    high = [f for f in findings if f.severity == Severity.HIGH]
+    assert high == []
