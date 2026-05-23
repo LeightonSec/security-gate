@@ -1,9 +1,12 @@
+import json
 from pathlib import Path
 
 import pytest
 
+from unittest.mock import MagicMock, patch
 from security_gate.scanner.ai_ml import AiMlScanner
 from security_gate.scanner.outbound import OutboundScanner
+from security_gate.scanner.sca import ScaScanner
 from security_gate.scanner.security_tool import SecurityToolScanner
 from security_gate.scanner.web_app import WebAppScanner
 from security_gate.scanner.path_manip import PathManipScanner
@@ -328,3 +331,65 @@ def test_gate_default_profile_still_passes_medium():
         file="x.py", line=1, match="x", detail="test", checklist_item="test",
     )]
     assert gate_passed(findings) is True
+
+
+# --- ScaScanner ---
+
+def test_sca_clean_on_no_req_files(tmp_path):
+    findings = ScaScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_sca_skips_with_info_when_no_pinned_deps(tmp_path):
+    (tmp_path / "requirements.txt").write_text("requests>=2.28.0\nclick\n")
+    findings = ScaScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.INFO
+    assert "no pinned versions" in findings[0].detail.lower()
+
+
+def test_sca_skips_with_info_when_pip_audit_missing(tmp_path):
+    (tmp_path / "requirements.txt").write_text("requests==2.28.0\n")
+    with patch("security_gate.scanner.sca.subprocess.run", side_effect=FileNotFoundError):
+        findings = ScaScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.INFO
+    assert "pip-audit not installed" in findings[0].detail
+
+
+def test_sca_parses_critical_cve(tmp_path):
+    (tmp_path / "requirements.txt").write_text("requests==2.28.0\n")
+    mock_output = json.dumps({"dependencies": [{"name": "requests", "version": "2.28.0", "vulns": [
+        {"id": "CVE-2023-9999", "description": "Critical RCE vulnerability", "cvss": 9.5}
+    ]}]})
+    mock_result = MagicMock(stdout=mock_output, returncode=1)
+    with patch("security_gate.scanner.sca.subprocess.run", return_value=mock_result):
+        findings = ScaScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.CRITICAL
+    assert "requests==2.28.0" in findings[0].match
+    assert "CVE-2023-9999" in findings[0].detail
+
+
+def test_sca_parses_high_cve(tmp_path):
+    (tmp_path / "requirements.txt").write_text("urllib3==1.26.0\n")
+    mock_output = json.dumps({"dependencies": [{"name": "urllib3", "version": "1.26.0", "vulns": [
+        {"id": "CVE-2023-1234", "description": "High severity request smuggling", "cvss": 7.5}
+    ]}]})
+    mock_result = MagicMock(stdout=mock_output, returncode=1)
+    with patch("security_gate.scanner.sca.subprocess.run", return_value=mock_result):
+        findings = ScaScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.HIGH
+
+
+def test_sca_handles_pip_audit_exit_1_with_findings(tmp_path):
+    (tmp_path / "requirements.txt").write_text("flask==2.0.0\n")
+    mock_output = json.dumps({"dependencies": [{"name": "flask", "version": "2.0.0", "vulns": [
+        {"id": "CVE-2023-5678", "description": "Medium severity issue", "cvss": 5.0}
+    ]}]})
+    mock_result = MagicMock(stdout=mock_output, returncode=1)
+    with patch("security_gate.scanner.sca.subprocess.run", return_value=mock_result):
+        findings = ScaScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.MEDIUM
