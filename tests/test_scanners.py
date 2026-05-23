@@ -4,6 +4,7 @@ import pytest
 
 from security_gate.scanner.ai_ml import AiMlScanner
 from security_gate.scanner.outbound import OutboundScanner
+from security_gate.scanner.web_app import WebAppScanner
 from security_gate.scanner.path_manip import PathManipScanner
 from security_gate.scanner.secrets import SecretsScanner
 from security_gate.scanner.retention import RetentionScanner
@@ -204,3 +205,70 @@ def test_ai_ml_pinned_pretrained_no_finding(tmp_path):
     )
     findings = AiMlScanner().scan(tmp_path)
     assert findings == []
+
+
+# --- WebAppScanner ---
+
+def test_web_app_detects_debug_mode():
+    findings = WebAppScanner().scan(FIXTURES)
+    high = [f for f in findings if "has_web_app" in f.file and f.severity == Severity.HIGH]
+    assert any("debug" in f.match.lower() or "DEBUG" in f.match for f in high)
+
+
+def test_web_app_detects_sql_injection():
+    findings = WebAppScanner().scan(FIXTURES)
+    critical = [f for f in findings if "has_web_app" in f.file and f.severity == Severity.CRITICAL]
+    assert len(critical) >= 1
+
+
+def test_web_app_detects_cors_wildcard():
+    findings = WebAppScanner().scan(FIXTURES)
+    high = [f for f in findings if "has_web_app" in f.file and f.severity == Severity.HIGH]
+    assert any("CORS" in f.match or "cors" in f.match.lower() for f in high)
+
+
+def test_web_app_detects_unauthenticated_state_route():
+    findings = WebAppScanner().scan(FIXTURES)
+    medium = [f for f in findings if "has_web_app" in f.file and f.severity == Severity.MEDIUM]
+    assert len(medium) >= 1
+
+
+def test_web_app_clean_fixture_no_findings():
+    clean_findings = [f for f in WebAppScanner().scan(FIXTURES) if "clean" in f.file]
+    assert clean_findings == []
+
+
+def test_web_app_authenticated_route_no_finding(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text(
+        'from flask import Flask\n'
+        'app = Flask(__name__)\n'
+        '@app.route("/secure", methods=["POST"])\n'
+        '@login_required\n'
+        'def secure_view():\n'
+        '    pass\n'
+    )
+    findings = WebAppScanner().scan(tmp_path)
+    medium = [f for f in findings if f.severity == Severity.MEDIUM]
+    assert medium == []
+
+
+def test_web_app_get_only_route_no_finding(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text(
+        '@app.route("/public")\n'
+        'def public_view():\n'
+        '    return "hello"\n'
+    )
+    findings = WebAppScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_web_app_parameterised_sql_no_finding(tmp_path):
+    f = tmp_path / "db.py"
+    f.write_text(
+        'cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))\n'
+    )
+    findings = WebAppScanner().scan(tmp_path)
+    critical = [f for f in findings if f.severity == Severity.CRITICAL]
+    assert critical == []

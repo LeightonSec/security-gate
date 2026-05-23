@@ -6,6 +6,7 @@ from .secrets import SecretsScanner
 from .retention import RetentionScanner
 from .validation import ValidationScanner
 from .ai_ml import AiMlScanner
+from .web_app import WebAppScanner
 
 ALL_SCANNERS = [
     OutboundScanner,
@@ -15,4 +16,5 @@ ALL_SCANNERS = [
     RetentionScanner,
     ValidationScanner,
     AiMlScanner,
+    WebAppScanner,
 ]
