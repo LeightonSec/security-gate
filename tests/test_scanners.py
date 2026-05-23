@@ -4,6 +4,7 @@ import pytest
 
 from security_gate.scanner.ai_ml import AiMlScanner
 from security_gate.scanner.outbound import OutboundScanner
+from security_gate.scanner.security_tool import SecurityToolScanner
 from security_gate.scanner.web_app import WebAppScanner
 from security_gate.scanner.path_manip import PathManipScanner
 from security_gate.scanner.secrets import SecretsScanner
@@ -272,3 +273,58 @@ def test_web_app_parameterised_sql_no_finding(tmp_path):
     findings = WebAppScanner().scan(tmp_path)
     critical = [f for f in findings if f.severity == Severity.CRITICAL]
     assert critical == []
+
+
+# --- SecurityToolScanner ---
+
+def test_security_tool_detects_path_traversal():
+    findings = SecurityToolScanner().scan(FIXTURES)
+    medium = [f for f in findings if "has_security_tool" in f.file and f.severity == Severity.MEDIUM]
+    assert any("passwd" in f.match or "shadow" in f.match or ".." in f.match for f in medium)
+
+
+def test_security_tool_detects_injection_payload():
+    findings = SecurityToolScanner().scan(FIXTURES)
+    medium = [f for f in findings if "has_security_tool" in f.file and f.severity == Severity.MEDIUM]
+    assert any("DROP TABLE" in f.match or "alert" in f.match or "onerror" in f.match for f in medium)
+
+
+def test_security_tool_clean_fixture_no_findings():
+    clean_findings = [f for f in SecurityToolScanner().scan(FIXTURES) if "clean" in f.file]
+    assert clean_findings == []
+
+
+def test_security_tool_skips_non_test_files(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text("payload = '/etc/passwd'\n")
+    findings = SecurityToolScanner().scan(tmp_path)
+    assert findings == []
+
+
+# --- Profile-aware gate ---
+
+def test_gate_security_tool_profile_blocks_medium():
+    from security_gate.scanner.base import Finding, Severity
+    findings = [Finding(
+        scanner="test", severity=Severity.MEDIUM,
+        file="x.py", line=1, match="x", detail="test", checklist_item="test",
+    )]
+    assert gate_passed(findings, profile="security_tool") is False
+
+
+def test_gate_security_tool_profile_passes_low():
+    from security_gate.scanner.base import Finding, Severity
+    findings = [Finding(
+        scanner="test", severity=Severity.LOW,
+        file="x.py", line=1, match="x", detail="test", checklist_item="test",
+    )]
+    assert gate_passed(findings, profile="security_tool") is True
+
+
+def test_gate_default_profile_still_passes_medium():
+    from security_gate.scanner.base import Finding, Severity
+    findings = [Finding(
+        scanner="test", severity=Severity.MEDIUM,
+        file="x.py", line=1, match="x", detail="test", checklist_item="test",
+    )]
+    assert gate_passed(findings) is True

@@ -22,25 +22,31 @@ def _counts(findings: list[Finding]) -> dict:
     return counts
 
 
-def gate_passed(findings: list[Finding]) -> bool:
+def gate_passed(findings: list[Finding], profile: str = "default") -> bool:
     counts = _counts(findings)
+    if profile == "security_tool":
+        return (
+            counts[Severity.CRITICAL] == 0
+            and counts[Severity.HIGH] == 0
+            and counts[Severity.MEDIUM] == 0
+        )
     return counts[Severity.CRITICAL] == 0 and counts[Severity.HIGH] == 0
 
 
-def generate_json(findings: list[Finding], repo_path: str) -> str:
+def generate_json(findings: list[Finding], repo_path: str, profile: str = "default") -> str:
     counts = _counts(findings)
     return json.dumps({
         "generated": datetime.now(timezone.utc).isoformat(),
         "repo": repo_path,
-        "gate": "PASSED" if gate_passed(findings) else "BLOCKED",
+        "gate": "PASSED" if gate_passed(findings, profile) else "BLOCKED",
         "summary": {s.value: counts[s] for s in Severity},
         "findings": [f.to_dict() for f in sorted(findings, key=lambda x: x.sort_key())],
     }, indent=2)
 
 
-def generate_markdown(findings: list[Finding], repo_path: str) -> str:
+def generate_markdown(findings: list[Finding], repo_path: str, profile: str = "default") -> str:
     counts = _counts(findings)
-    passed = gate_passed(findings)
+    passed = gate_passed(findings, profile)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     total = len(findings)
 
