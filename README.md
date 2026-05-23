@@ -24,11 +24,15 @@ Each finding maps directly to a checklist gate item. The scanner auto-populates 
 | `hardcoded_secrets` | Insecure default values in `getenv()`, inline API key assignments | CRITICAL/HIGH |
 | `retention_policy` | Database writes and file appends with no TTL/purge logic in scope | MEDIUM |
 | `missing_validation` | Flask input (`request.get_json`, `request.args`) without Pydantic schema validation | HIGH |
+| `ai_ml` | `from_pretrained()` without `revision=` pin, `trust_remote_code=True`, permissive HF telemetry vars | CRITICAL/HIGH/MEDIUM |
+| `web_app` | Debug mode enabled, SQL injection (f-string/concat), CORS wildcard, unauthenticated POST/PUT/DELETE routes | CRITICAL/HIGH/MEDIUM |
+| `security_tool` | Path traversal and injection payload strings in test fixtures — scoped to `tests/` and `fixtures/` paths only | MEDIUM |
 
 ## Gate logic
 
 - **GATE BLOCKED** — any CRITICAL or HIGH finding. Do not proceed to next phase.
 - **GATE PASSED** — zero CRITICAL/HIGH. MEDIUM and below require review but do not block.
+- **`security_tool` profile** — MEDIUM and above blocks. Activated when scanning security tooling repos with `profile="security_tool"`.
 
 ## Installation
 
@@ -108,7 +112,7 @@ security-gate is a SAST tool. It catches what can be detected by reading source 
 | Runtime behaviour | No sandboxed execution or network traffic monitoring | Wireshark/Little Snitch for outbound; runtime sandbox (v1.1 stretch goal) |
 | Transitive dependencies | Only direct deps scanned, not the full tree | `pip-audit` or `safety` for transitive SCA |
 | Git history | Working tree only; committed secrets in history not caught | `gitleaks --source=git` on full history (v1.1 roadmap) |
-| Container/environment layer | No Dockerfile or docker-compose scanning | hadolint integration (v1.1 roadmap, `iac` profile) |
+| Container/environment layer | No Dockerfile or docker-compose scanning | hadolint integration (deferred — no IaC targets in current portfolio) |
 | Tamper detection | Reports are not signed; integrity relies on CI enforcement | Signed gate reports (v1.1 roadmap) |
 | Import-time side effects | Statically undetectable | Requires sandboxed execution |
 | Unknown violation patterns | Only catches patterns found manually first | Submit findings as issues; patterns are added after real-world discovery |
@@ -127,16 +131,14 @@ security-gate covers the SAST layer and a subset of SCA (direct deps, no transit
 
 v1.0 ships with a flat scanner that runs all rules against any Python project. v1.1 introduces profile-based scanning — the tool auto-detects project type and applies the relevant rule set.
 
-| Issue | Profile | Additional checks |
-|-------|---------|-------------------|
-| [#1](https://github.com/LeightonSec/security-gate/issues/1) | `ai_ml` | `from_pretrained()` without `revision=`, `trust_remote_code=True`, HF telemetry, NIST 800-218A model card validation |
-| [#2](https://github.com/LeightonSec/security-gate/issues/2) | `web_app` | Debug mode, SQL injection via string concatenation, CORS wildcard, unauthenticated POST routes |
-| [#3](https://github.com/LeightonSec/security-gate/issues/3) | `security_tool` | Stricter gate threshold (MEDIUM blocks), payload/IOC detection in test fixtures |
-| [#4](https://github.com/LeightonSec/security-gate/issues/4) | `iac` | Terraform/Dockerfile/Ansible — hardcoded creds, public exposure patterns |
+| Issue | Profile | Status | Additional checks |
+|-------|---------|--------|-------------------|
+| [#1](https://github.com/LeightonSec/security-gate/issues/1) | `ai_ml` | ✅ shipped | `from_pretrained()` without `revision=`, `trust_remote_code=True`, permissive HF telemetry vars |
+| [#2](https://github.com/LeightonSec/security-gate/issues/2) | `web_app` | ✅ shipped | Debug mode, SQL injection (f-string/concat), CORS wildcard, unauthenticated POST/PUT/DELETE routes |
+| [#3](https://github.com/LeightonSec/security-gate/issues/3) | `security_tool` | ✅ shipped | MEDIUM blocks gate, path traversal and injection payloads in test fixtures |
+| [#4](https://github.com/LeightonSec/security-gate/issues/4) | `iac` | ⏸ deferred | Terraform/Dockerfile/Ansible — no IaC targets in current portfolio to validate rules against |
 
 Detection is automatic — no `--profile` flag needed. The tool reads requirements.txt and file extensions to classify, then applies the matching rule set.
-
-**v1.1 also adds:** full transitive dependency tree scanning, `gitleaks --source=git` on full history, Dockerfile scanning (hadolint integration), signed gate reports, and per-repo findings persistence.
 
 ## Origin
 
