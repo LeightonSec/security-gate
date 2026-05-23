@@ -5,6 +5,7 @@ from .deps import DepsScanner
 from .secrets import SecretsScanner
 from .retention import RetentionScanner
 from .validation import ValidationScanner
+from .ai_ml import AiMlScanner
 
 ALL_SCANNERS = [
     OutboundScanner,
@@ -13,4 +14,5 @@ ALL_SCANNERS = [
     SecretsScanner,
     RetentionScanner,
     ValidationScanner,
+    AiMlScanner,
 ]

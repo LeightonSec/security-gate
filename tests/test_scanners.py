@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from security_gate.scanner.ai_ml import AiMlScanner
 from security_gate.scanner.outbound import OutboundScanner
 from security_gate.scanner.path_manip import PathManipScanner
 from security_gate.scanner.secrets import SecretsScanner
@@ -166,3 +167,40 @@ def test_deps_pyproject_lockfile_suppresses_high(tmp_path):
     findings = DepsScanner().scan(tmp_path)
     high = [f for f in findings if f.severity == Severity.HIGH]
     assert high == []
+
+
+# --- AiMlScanner ---
+
+def test_ai_ml_detects_unpinned_pretrained():
+    findings = AiMlScanner().scan(FIXTURES)
+    high = [f for f in findings if "has_ai_ml" in f.file and f.severity == Severity.HIGH]
+    assert len(high) >= 1
+
+
+def test_ai_ml_detects_trust_remote_code():
+    findings = AiMlScanner().scan(FIXTURES)
+    critical = [f for f in findings if "has_ai_ml" in f.file and f.severity == Severity.CRITICAL]
+    assert len(critical) >= 1
+
+
+def test_ai_ml_detects_permissive_telemetry():
+    findings = AiMlScanner().scan(FIXTURES)
+    medium = [f for f in findings if "has_ai_ml" in f.file and f.severity == Severity.MEDIUM]
+    assert len(medium) >= 1
+
+
+def test_ai_ml_clean_fixture_no_findings():
+    clean_findings = [f for f in AiMlScanner().scan(FIXTURES) if "clean" in f.file]
+    assert clean_findings == []
+
+
+def test_ai_ml_pinned_pretrained_no_finding(tmp_path):
+    f = tmp_path / "model_loader.py"
+    f.write_text(
+        'model = AutoModel.from_pretrained(\n'
+        '    "bert-base-uncased",\n'
+        '    revision="abc123def456",\n'
+        ')\n'
+    )
+    findings = AiMlScanner().scan(tmp_path)
+    assert findings == []
