@@ -174,6 +174,24 @@ def test_deps_pyproject_lockfile_suppresses_high(tmp_path):
     assert high == []
 
 
+def test_deps_hash_pinned_requirements_no_medium(tmp_path):
+    (tmp_path / "requirements.txt").write_text(
+        "flask==3.1.3 \\\n"
+        "    --hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \\\n"
+        "    --hash=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\n"
+    )
+    findings = DepsScanner().scan(tmp_path)
+    medium = [f for f in findings if f.severity == Severity.MEDIUM]
+    assert medium == []
+
+
+def test_deps_unpinned_requirement_still_fires(tmp_path):
+    (tmp_path / "requirements.txt").write_text("flask>=3.0.0\n")
+    findings = DepsScanner().scan(tmp_path)
+    medium = [f for f in findings if f.severity == Severity.MEDIUM]
+    assert len(medium) == 1
+
+
 # --- AiMlScanner ---
 
 def test_ai_ml_detects_unpinned_pretrained():

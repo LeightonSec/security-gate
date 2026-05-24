@@ -14,7 +14,7 @@ from .base import BaseScanner, Finding, Severity
 
 _COMMENT = re.compile(r"^\s*#")
 _BLANK = re.compile(r"^\s*$")
-_OPTION = re.compile(r"^\s*-[a-zA-Z]")
+_OPTION = re.compile(r"^\s*--?[a-zA-Z]")
 _PINNED = re.compile(r"==")
 _HASHED = re.compile(r"--hash=")
 _PKG_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*")
