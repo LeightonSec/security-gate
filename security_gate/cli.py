@@ -43,6 +43,7 @@ def scan(
     sbom: bool = typer.Option(False, "--sbom", help="Also generate a CycloneDX 1.5 SBOM for the scanned repo"),
     exit_code: bool = typer.Option(True, "--exit-code/--no-exit-code", help="Exit 1 if gate is blocked"),
     exclude: list[str] = typer.Option([], "--exclude", "-e", help="Additional directory names to exclude (repeatable)"),
+    url: str | None = typer.Option(None, "--url", help="Base URL of a running service to DAST scan (e.g. http://localhost:5001)"),
 ) -> None:
     """Scan a repo and produce a security gate report."""
     if not path.is_dir():
@@ -59,6 +60,17 @@ def scan(
         all_findings.extend(findings)
         status = f"[red]{len(findings)} findings[/red]" if findings else "[green]clean[/green]"
         console.print(f"  {scanner.name:<22} {status}")
+
+    if url:
+        from security_gate.dast import DastScanner
+        try:
+            dast = DastScanner(base_url=url)
+            dast_findings = dast.scan()
+            all_findings.extend(dast_findings)
+            dast_status = f"[red]{len(dast_findings)} findings[/red]" if dast_findings else "[green]clean[/green]"
+            console.print(f"  {'dast':<22} {dast_status}")
+        except ConnectionError as exc:
+            console.print(f"  [yellow]{'dast':<22}[/yellow] [yellow]skipped — {exc}[/yellow]")
 
     console.print()
 
@@ -90,10 +102,17 @@ def scan(
     if all_findings:
         for f in sorted(all_findings, key=lambda x: x.sort_key()):
             colour = _SEVERITY_COLOUR[f.severity]
-            console.print(
-                f"  [{colour}]{f.severity.value:<8}[/{colour}] "
-                f"[cyan]{f.file}:{f.line}[/cyan]  [dim]{f.scanner}[/dim]"
-            )
+            if hasattr(f, "file"):
+                console.print(
+                    f"  [{colour}]{f.severity.value:<8}[/{colour}] "
+                    f"[cyan]{f.file}:{f.line}[/cyan]  [dim]{f.scanner}[/dim]"
+                )
+            else:
+                sc = f" · HTTP {f.status_code}" if f.status_code is not None else ""
+                console.print(
+                    f"  [{colour}]{f.severity.value:<8}[/{colour}] "
+                    f"[cyan]{f.endpoint}[/cyan]  [dim]{f.scanner} · {f.payload_variant}{sc}[/dim]"
+                )
             console.print(f"           {f.detail}")
             console.print(f"           [dim]→ {f.checklist_item}[/dim]\n")
 

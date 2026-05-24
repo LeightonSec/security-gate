@@ -79,15 +79,24 @@ def generate_markdown(findings: list[Finding], repo_path: str, profile: str = "d
         lines += [f"### {scanner}", ""]
         for f in scanner_findings:
             emoji = _SEVERITY_EMOJI[f.severity]
-            lines += [
-                f"**{emoji} {f.severity.value}** — `{f.file}:{f.line}`",
-                f"> {f.detail}",
-                f"```",
-                f"{f.match}",
-                f"```",
-                f"*Checklist:* `{f.checklist_item}`",
-                "",
-            ]
+            if hasattr(f, "file"):
+                lines += [
+                    f"**{emoji} {f.severity.value}** — `{f.file}:{f.line}`",
+                    f"> {f.detail}",
+                    f"```",
+                    f"{f.match}",
+                    f"```",
+                    f"*Checklist:* `{f.checklist_item}`",
+                    "",
+                ]
+            else:
+                sc = f" · HTTP {f.status_code}" if f.status_code is not None else ""
+                lines += [
+                    f"**{emoji} {f.severity.value}** — `{f.endpoint}`  _{f.payload_variant}{sc}_",
+                    f"> {f.detail}",
+                    f"*Checklist:* `{f.checklist_item}`",
+                    "",
+                ]
 
     lines += [
         "---",
