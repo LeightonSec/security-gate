@@ -1,159 +1,133 @@
 # security-gate
 
-Static security gate scanner for Python security projects. Catches the violations that matter most before code ships.
+Before a single line of [threat-classifier](https://github.com/LeightonSec/threat-classifier) was written, a manual audit found verbatim attacker prompts being forwarded to the Anthropic API, a `sys.path.insert('../ai-firewall')` that would silently load from the wrong location if the repo layout changed, and production credentials falling back to `"changeme"`. Six violations across four repos — none of them caught by existing tooling.
 
-Each finding maps directly to a checklist gate item. The scanner auto-populates what it can find statically; human-judgement items remain for manual sign-off.
+security-gate automates the repeatable half of that audit. Every rule it enforces was found manually first. Teams building AI products routinely ship with trust boundaries they haven't mapped, training data of unknown provenance, and inference pipelines that pass attacker-controlled strings to external APIs. The scanner catches the violations before they reach production. The gate forces a decision on the ones it can't.
 
-## Framework alignment
+## The gate philosophy
 
-| Framework | Version | Date | Coverage |
-|-----------|---------|------|----------|
-| OWASP SAMM | v2.0 | February 2020 (actively maintained) | Implementation/Verification functions |
-| NIST SSDF | SP 800-218 v1.1 | February 2022 | PW and RV practices (v1.2 IPD December 2025, not yet final) |
-| NIST SSDF AI Profile | SP 800-218A | July 26, 2024 | AI model provenance and supply chain |
-| OWASP Top 10 | 2025 | January 2026 final | A03 Injection, A05 Security Misconfiguration, A06 Vulnerable Components |
-| CIS Supply Chain | Software Supply Chain Security Guide v1.0 | 2022 | Source code, build pipeline, dependency controls |
+A linter tells you what's wrong. A gate forces you to decide before you proceed.
 
-## What it catches
+Every finding maps to a checklist item. The scanner closes what it can verify automatically. Anything requiring human judgement — trust boundary map, model provenance, offline inference confirmation — stays open until a person signs off. Nothing moves to the next phase with unresolved CRITICAL or HIGH findings.
 
-| Scanner | What it detects | Severity |
-|---------|----------------|----------|
-| `outbound_calls` | External HTTP calls, Anthropic/OpenAI SDK usage, boto3 — data leaving the trust boundary | HIGH |
-| `path_manipulation` | `sys.path.insert/append` — implicit repo coupling, brittle and exploitable | HIGH |
-| `unpinned_deps` | `requirements.txt` without exact version pins or `--hash=` — supply chain attack surface | HIGH/MEDIUM |
-| `hardcoded_secrets` | Insecure default values in `getenv()`, inline API key assignments | CRITICAL/HIGH |
-| `retention_policy` | Database writes and file appends with no TTL/purge logic in scope | MEDIUM |
-| `missing_validation` | Flask input (`request.get_json`, `request.args`) without Pydantic schema validation | HIGH |
-| `ai_ml` | `from_pretrained()` without `revision=` pin, `trust_remote_code=True`, permissive HF telemetry vars | CRITICAL/HIGH/MEDIUM |
-| `web_app` | Debug mode enabled, SQL injection (f-string/concat), CORS wildcard, unauthenticated POST/PUT/DELETE routes | CRITICAL/HIGH/MEDIUM |
-| `security_tool` | Path traversal and injection payload strings in test fixtures — scoped to `tests/` and `fixtures/` paths only | MEDIUM |
+This is the difference between a security scanner and a security gate: the gate has teeth.
 
-## Gate logic
+## What each gate protects against
 
-- **GATE BLOCKED** — any CRITICAL or HIGH finding. Do not proceed to next phase.
-- **GATE PASSED** — zero CRITICAL/HIGH. MEDIUM and below require review but do not block.
-- **`security_tool` profile** — MEDIUM and above blocks. Activated when scanning security tooling repos with `profile="security_tool"`.
+| Gate | Threat it exists to prevent |
+|------|-----------------------------|
+| `outbound_calls` | Attacker prompts exfiltrated to external APIs; data leaving your trust boundary without a documented decision |
+| `path_manipulation` | Implicit repo coupling that loads the wrong code silently when directory layout changes |
+| `unpinned_deps` | Dependency confusion and supply chain attacks via package registry poisoning |
+| `hardcoded_secrets` | Credentials committed to version history or hardcoded fallbacks that fail open in production |
+| `retention_policy` | Indefinite accumulation of threat data, network captures, or attacker payloads with no purge path |
+| `missing_validation` | Attacker-controlled input reaching business logic without a schema contract |
+| `ai_ml` | Unpinned model downloads, arbitrary code execution via `trust_remote_code`, telemetry sending training data to third parties |
+| `web_app` | Debug mode in production, SQL injection, CORS wildcard, unauthenticated state-changing endpoints |
+| `security_tool` | Test fixtures containing real attack payloads or path traversal strings — synthetic fixtures only |
 
-## Installation
+## DAST: the scanner that found a real bug
 
-```bash
-pip install -e .
+v1.3 added a runtime scanner (`--url`) that fires against a live service alongside the static analysis pass. On the first real run against `llm-honeypot` — a Flask honeypot built in the same portfolio — it reported:
+
 ```
+dast    1 findings
+HIGH    /chat  detection_rate
+        LLM threat detection rate 92.3% is below 95% threshold
+```
+
+That finding was real. One of the 13 probe payloads slipped through the classifier with `risk_level: LOW`. The root cause: the keyword pattern `r"ignore previous instructions"` didn't match `"Ignore your previous instructions"` — the word "your" broke the match. The fix was a one-character regex change. The rescan returned 13/13 and `dast clean`.
+
+The scanner found a genuine gap in the system it was built alongside. That's what the tool is for.
+
+## What's not in scope — and why
+
+security-gate is intentionally narrow. It covers SAST and direct dependency SCA. It does not attempt runtime sandboxing, transitive dependency analysis, container scanning, or fuzzing. Each of those is a distinct discipline with better dedicated tools.
+
+The `# gate: ignore` suppression pattern exists because the scanner is not always right. When a finding is a false positive, the suppression requires a documented rationale inline — not a blanket exclusion, not a config file, a sentence at the callsite explaining why this specific instance is safe:
+
+```python
+tokenizer = DistilBertTokenizerFast.from_pretrained(str(path))  # gate: ignore — local MODEL_PATH, not HuggingFace hub
+```
+
+That decision lives in the code where the future reader will look for it.
+
+---
 
 ## Usage
 
 ```bash
-# Scan a repo, print report to stdout
+# SAST scan
 security-gate scan /path/to/repo
+
+# SAST + DAST (requires running service)
+security-gate scan /path/to/repo --url http://localhost:5001
 
 # Save reports to disk
 security-gate scan /path/to/repo --save
 
-# JSON output (for CI integration)
+# JSON output for CI
 security-gate scan /path/to/repo --output json --save
-
-# Both formats
-security-gate scan /path/to/repo --output both --save
-
-# Don't fail CI on gate block (still shows findings)
-security-gate scan /path/to/repo --no-exit-code
 ```
 
-## Example output
+## Gate logic
 
-```
-security-gate v0.1.0 — scanning /path/to/ai-firewall
+- **GATE BLOCKED** — any CRITICAL or HIGH finding. Do not proceed.
+- **GATE PASSED** — zero CRITICAL/HIGH. MEDIUM and below require review but don't block.
 
-  outbound_calls         3 findings
-  path_manipulation      1 findings
-  unpinned_deps          2 findings
-  hardcoded_secrets      1 findings
-  retention_policy       1 findings
-  missing_validation     0 findings
+## Scanners
 
-❌ GATE BLOCKED — resolve CRITICAL/HIGH findings before proceeding
+| Scanner | Detects | Severity |
+|---------|---------|----------|
+| `outbound_calls` | HTTP calls, Anthropic/OpenAI SDK, boto3 | HIGH |
+| `path_manipulation` | `sys.path.insert/append` | HIGH |
+| `unpinned_deps` | Missing version pins or hashes | HIGH/MEDIUM |
+| `hardcoded_secrets` | Insecure `getenv()` fallbacks, inline key assignments | CRITICAL/HIGH |
+| `retention_policy` | DB writes and file appends without TTL/purge logic | MEDIUM |
+| `missing_validation` | Flask input without Pydantic validation | HIGH |
+| `ai_ml` | `from_pretrained()` without `revision=`, `trust_remote_code=True`, permissive HF telemetry | CRITICAL/HIGH/MEDIUM |
+| `web_app` | Debug mode, SQL injection, CORS wildcard, unauthenticated routes | CRITICAL/HIGH/MEDIUM |
+| `security_tool` | Path traversal and injection payload strings in test fixtures | MEDIUM |
+| `dast` | Runtime: headers, debug mode, stack trace leakage, LLM detection rate, model artefact leakage | CRITICAL/HIGH/MEDIUM/INFO |
 
-  HIGH     detector.py:4   outbound_calls
-           Anthropic SDK instantiated — prompts/data sent to external API
-           → PRE-BUILD-4: Confirm offline inference
+## DAST checks (requires `--url`)
 
-  HIGH     classifier.py:3  path_manipulation
-           sys.path manipulation — implicit trust between repos, brittle path coupling
-           → PHASE-1-7: No relative-path repo coupling
-```
+| Check | What it tests | Finding if failed |
+|-------|--------------|-------------------|
+| DAST-1 | Security headers present (`X-Content-Type-Options`, `X-Frame-Options`, `CSP`) | MEDIUM |
+| DAST-2 | Debug mode off (probes `/dast-debug-probe` for Werkzeug markers) | CRITICAL |
+| DAST-3 | Stack traces not exposed in API responses | HIGH |
+| DAST-4 | LLM detection pipeline active and ≥95% detection rate on threat probes | HIGH (or INFO if `DAST_MODE` not enabled) |
+| DAST-5 | No model artefact leakage (`logits`, `token_ids`, `hidden_states`) in responses | HIGH |
+
+To enable DAST-4 evaluation, start the target service with `DAST_MODE=true`. The service must return `risk_level` and `classification` fields in its response.
+
+## Manual sign-off required
+
+Every gate report includes items the scanner cannot verify automatically:
+
+- [ ] Trust boundary map complete and reviewed
+- [ ] Adversarial input paths assessed
+- [ ] HF model provenance verified (SHA checksum pinned)
+- [ ] Offline inference confirmed (network capture verification)
+- [ ] Data retention policy defined and implemented
+- [ ] Test fixtures confirmed synthetic (no real IOCs/IPs/payloads)
 
 ## CI integration
-
-The included GitHub Actions workflow runs security-gate against your repo on every push and PR, and uploads the gate report as an artifact:
 
 ```yaml
 - name: Run security-gate
   run: security-gate scan . --output json --save
 ```
 
-Exit code 1 on any CRITICAL/HIGH finding — blocks merge until resolved.
+Exit code 1 on CRITICAL/HIGH — blocks merge until resolved.
 
-## What the scanner can't verify
+## Framework alignment
 
-These gate items require human sign-off — documented in every report's manual sign-off section:
-
-- Trust boundary map reviewed
-- HF model provenance verified (SHA checksum pinned)
-- Offline inference confirmed (verified with Wireshark/Little Snitch)
-- Data retention policy defined and implemented
-- Test fixtures confirmed synthetic (no real IOCs/IPs/payloads)
-
-## Known limitations
-
-security-gate is a SAST tool. It catches what can be detected by reading source files statically. These violation patterns are outside its current scope:
-
-| Limitation | What it means | How to address |
-|------------|---------------|----------------|
-| Runtime behaviour | No sandboxed execution or network traffic monitoring | Wireshark/Little Snitch for outbound; runtime sandbox (v1.1 stretch goal) |
-| Transitive dependencies | Only direct deps scanned, not the full tree | `pip-audit` or `safety` for transitive SCA |
-| Git history | Working tree only; committed secrets in history not caught | `gitleaks --source=git` on full history (v1.1 roadmap) |
-| Container/environment layer | No Dockerfile or docker-compose scanning | hadolint integration (deferred — no IaC targets in current portfolio) |
-| Tamper detection | Reports are not signed; integrity relies on CI enforcement | Signed gate reports (v1.1 roadmap) |
-| Import-time side effects | Statically undetectable | Requires sandboxed execution |
-| Unknown violation patterns | Only catches patterns found manually first | Submit findings as issues; patterns are added after real-world discovery |
-
-### Where security-gate sits in the testing stack
-
-```
-SAST (← you are here)  →  SCA  →  DAST  →  IAST  →  Fuzzing
-static source analysis     deps    running   instrumented  boundary
-                           tree    app        runtime       inputs
-```
-
-security-gate covers the SAST layer and a subset of SCA (direct deps, no transitive tree). The v1.1 roadmap adds full SCA. DAST, IAST, and fuzzing remain out of scope.
-
-## Roadmap
-
-v1.0 ships with a flat scanner that runs all rules against any Python project. v1.1 introduces profile-based scanning — the tool auto-detects project type and applies the relevant rule set.
-
-| Issue | Profile | Status | Additional checks |
-|-------|---------|--------|-------------------|
-| [#1](https://github.com/LeightonSec/security-gate/issues/1) | `ai_ml` | ✅ shipped | `from_pretrained()` without `revision=`, `trust_remote_code=True`, permissive HF telemetry vars |
-| [#2](https://github.com/LeightonSec/security-gate/issues/2) | `web_app` | ✅ shipped | Debug mode, SQL injection (f-string/concat), CORS wildcard, unauthenticated POST/PUT/DELETE routes |
-| [#3](https://github.com/LeightonSec/security-gate/issues/3) | `security_tool` | ✅ shipped | MEDIUM blocks gate, path traversal and injection payloads in test fixtures |
-| [#4](https://github.com/LeightonSec/security-gate/issues/4) | `iac` | ⏸ deferred | Terraform/Dockerfile/Ansible — no IaC targets in current portfolio to validate rules against |
-
-Detection is automatic — no `--profile` flag needed. The tool reads requirements.txt and file extensions to classify, then applies the matching rule set.
-
-## Origin
-
-Built while auditing signal source repos ahead of building [threat-classifier](https://github.com/LeightonSec/threat-classifier). Before a single line of classifier code was written, a manual pre-build threat model surfaced 6 real violations across the existing LeightonSec SOC toolkit:
-
-- `ai-firewall` was sending verbatim attacker prompts to the Anthropic API
-- `pcap-analyser` was sending real network IPs to AbuseIPDB
-- `llm-honeypot` coupled to `ai-firewall` via `sys.path.insert('../ai-firewall')` — a hardcoded relative path that loads silently from the wrong location if the repo layout changes
-- `incident-tracker` had `SECRET_KEY = os.getenv('SECRET_KEY', 'changeme')` as a production fallback
-- Two repos accumulated threat data indefinitely with no retention policy
-
-security-gate was built to automate the repeatable half of that audit. Every rule it enforces was found manually first. The scanner catches them on the next repo before anyone has to look.
-
-Every violation it detects was real before it was a test fixture.
+Aligned with OWASP SAMM v2.0, NIST SSDF SP 800-218 v1.1, NIST SSDF AI Profile SP 800-218A, and OWASP Top 10 2025.
 
 ---
+
+Every violation it detects was real before it was a test fixture.
 
 *LeightonSec — security-engineered, gate by gate.*
