@@ -1,6 +1,9 @@
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
+
+_SUPPRESS = re.compile(r"#\s*gate:\s*ignore", re.IGNORECASE)
 
 
 class Severity(str, Enum):
@@ -67,6 +70,9 @@ class BaseScanner:
             if not any(part in self._excludes for part in p.parts)
             and not any(part.endswith(".egg-info") for part in p.parts)
         ]
+
+    def _suppressed(self, line: str) -> bool:
+        return bool(_SUPPRESS.search(line))
 
     def _rel(self, root: Path, path: Path) -> str:
         try:

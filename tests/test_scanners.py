@@ -79,6 +79,20 @@ def test_validation_clean_fixture_suppressed_by_pydantic():
     assert clean_findings == []
 
 
+def test_validation_gate_ignore_suppresses_finding(tmp_path):
+    f = tmp_path / "state.py"
+    f.write_text('data = json.loads(p.read_text())  # gate: ignore\n')
+    findings = ValidationScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_validation_without_suppression_still_fires(tmp_path):
+    f = tmp_path / "state.py"
+    f.write_text('data = json.loads(p.read_text())\n')
+    findings = ValidationScanner().scan(tmp_path)
+    assert len(findings) == 1
+
+
 def test_gate_passed_no_findings():
     assert gate_passed([]) is True
 
