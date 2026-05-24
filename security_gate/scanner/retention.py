@@ -43,7 +43,7 @@ class RetentionScanner(BaseScanner):
 
             for lineno, line in enumerate(lines, start=1):
                 stripped = line.strip()
-                if stripped.startswith("#"):
+                if stripped.startswith("#") or self._suppressed(line):
                     continue
                 for pattern in _WRITE_PATTERNS:
                     if pattern.search(line):

@@ -26,7 +26,7 @@ class AiMlScanner(BaseScanner):
 
             for i, line in enumerate(lines):
                 stripped = line.strip()
-                if stripped.startswith("#"):
+                if stripped.startswith("#") or self._suppressed(line):
                     continue
 
                 if _PRETRAINED.search(line):

@@ -54,7 +54,7 @@ class OutboundScanner(BaseScanner):
                 continue
             for lineno, line in enumerate(lines, start=1):
                 stripped = line.strip()
-                if stripped.startswith("#"):
+                if stripped.startswith("#") or self._suppressed(line):
                     continue
                 for pattern, detail, checklist_item in _COMPILED:
                     if pattern.search(line):

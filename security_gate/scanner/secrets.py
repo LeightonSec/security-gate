@@ -33,7 +33,7 @@ class SecretsScanner(BaseScanner):
                 continue
             for lineno, line in enumerate(lines, start=1):
                 stripped = line.strip()
-                if stripped.startswith("#"):
+                if stripped.startswith("#") or self._suppressed(line):
                     continue
                 if _HARDCODED_DEFAULTS.search(line):
                     findings.append(Finding(

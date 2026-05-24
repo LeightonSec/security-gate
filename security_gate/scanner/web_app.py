@@ -45,7 +45,7 @@ class WebAppScanner(BaseScanner):
 
             for i, line in enumerate(lines):
                 stripped = line.strip()
-                if stripped.startswith("#"):
+                if stripped.startswith("#") or self._suppressed(line):
                     continue
 
                 if _DEBUG_ENABLED.search(line):

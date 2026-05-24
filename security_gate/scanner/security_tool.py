@@ -37,7 +37,7 @@ class SecurityToolScanner(BaseScanner):
 
             for i, line in enumerate(lines):
                 stripped = line.strip()
-                if stripped.startswith("#"):
+                if stripped.startswith("#") or self._suppressed(line):
                     continue
 
                 for pattern in _PATH_TRAVERSAL:
