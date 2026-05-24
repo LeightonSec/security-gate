@@ -46,8 +46,17 @@ class Finding:
         }
 
 
+_DEFAULT_EXCLUDE_DIRS: frozenset[str] = frozenset({
+    ".git", "__pycache__", "node_modules",
+    ".venv", "venv", "dist", "build", ".eggs",
+})
+
+
 class BaseScanner:
     name: str = "base"
+
+    def __init__(self, excludes: frozenset[str] = frozenset()) -> None:
+        self._excludes = _DEFAULT_EXCLUDE_DIRS | excludes
 
     def scan(self, root: Path) -> list[Finding]:
         raise NotImplementedError
@@ -55,9 +64,8 @@ class BaseScanner:
     def _py_files(self, root: Path) -> list[Path]:
         return [
             p for p in root.rglob("*.py")
-            if ".git" not in p.parts
-            and "__pycache__" not in p.parts
-            and "node_modules" not in p.parts
+            if not any(part in self._excludes for part in p.parts)
+            and not any(part.endswith(".egg-info") for part in p.parts)
         ]
 
     def _rel(self, root: Path, path: Path) -> str:

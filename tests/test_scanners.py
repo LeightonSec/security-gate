@@ -278,6 +278,26 @@ def test_web_app_parameterised_sql_no_finding(tmp_path):
     assert critical == []
 
 
+def test_web_app_ddl_fstring_no_finding(tmp_path):
+    f = tmp_path / "db.py"
+    f.write_text(
+        'conn.execute(f"ALTER TABLE attacks ADD COLUMN {col} {definition}")\n'
+    )
+    findings = WebAppScanner().scan(tmp_path)
+    critical = [f for f in findings if f.severity == Severity.CRITICAL]
+    assert critical == []
+
+
+def test_web_app_dml_fstring_still_fires(tmp_path):
+    f = tmp_path / "db.py"
+    f.write_text(
+        'conn.execute(f"SELECT * FROM users WHERE id = {user_id}")\n'
+    )
+    findings = WebAppScanner().scan(tmp_path)
+    critical = [f for f in findings if f.severity == Severity.CRITICAL]
+    assert len(critical) == 1
+
+
 # --- SecurityToolScanner ---
 
 def test_security_tool_detects_path_traversal():

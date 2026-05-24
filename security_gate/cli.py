@@ -42,6 +42,7 @@ def scan(
     save: bool = typer.Option(False, "--save", "-s", help="Save report(s) to ./security-gate-report.*"),
     sbom: bool = typer.Option(False, "--sbom", help="Also generate a CycloneDX 1.5 SBOM for the scanned repo"),
     exit_code: bool = typer.Option(True, "--exit-code/--no-exit-code", help="Exit 1 if gate is blocked"),
+    exclude: list[str] = typer.Option([], "--exclude", "-e", help="Additional directory names to exclude (repeatable)"),
 ) -> None:
     """Scan a repo and produce a security gate report."""
     if not path.is_dir():
@@ -50,9 +51,10 @@ def scan(
 
     console.print(f"\n[bold]security-gate[/bold] v{__version__} — scanning [cyan]{path.resolve()}[/cyan]\n")
 
+    extra_excludes = frozenset(exclude)
     all_findings = []
     for scanner_cls in ALL_SCANNERS:
-        scanner = scanner_cls()
+        scanner = scanner_cls(excludes=extra_excludes)
         findings = scanner.scan(path)
         all_findings.extend(findings)
         status = f"[red]{len(findings)} findings[/red]" if findings else "[green]clean[/green]"

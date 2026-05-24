@@ -13,6 +13,10 @@ _SQL_FSTRING = re.compile(
 _SQL_CONCAT = re.compile(
     r"\.(execute|executemany)\s*\(\s*[\"'].*[\"']\s*\+",
 )
+_SQL_DDL = re.compile(
+    r"\b(ALTER|CREATE|DROP)\s+TABLE\b|\bPRAGMA\b",
+    re.IGNORECASE,
+)
 
 _CORS_WILDCARD = re.compile(
     r"(CORS\s*\(\s*app\s*\)|Access-Control-Allow-Origin[\"']?\s*:\s*[\"']?\*)",
@@ -55,7 +59,7 @@ class WebAppScanner(BaseScanner):
                         checklist_item="WEB-1: Debug mode disabled in production",
                     ))
 
-                if _SQL_FSTRING.search(line) or _SQL_CONCAT.search(line):
+                if (_SQL_FSTRING.search(line) or _SQL_CONCAT.search(line)) and not _SQL_DDL.search(line):
                     findings.append(Finding(
                         scanner=self.name,
                         severity=Severity.CRITICAL,
