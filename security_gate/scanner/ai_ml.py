@@ -49,7 +49,7 @@ class AiMlScanner(BaseScanner):
                         file=self._rel(root, py_file),
                         line=i + 1,
                         match=stripped[:120],
-                        detail="trust_remote_code=True enables arbitrary code execution from the model repository",
+                        detail="trust_remote_code=True enables arbitrary code execution from the model repository",  # gate: ignore — string literal in scanner detail message, not executable code
                         checklist_item="AI-ML-2: trust_remote_code never set to True",
                     ))
 

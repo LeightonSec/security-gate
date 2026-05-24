@@ -78,7 +78,7 @@ class DastScanner:
 
     def _load_payloads(self) -> list[dict]:
         lines = self._payloads_path.read_text(encoding="utf-8").splitlines()
-        return [json.loads(ln) for ln in lines if ln.strip()]
+        return [json.loads(ln) for ln in lines if ln.strip()]  # gate: ignore — reads bundled fixture file, not external data
 
     def scan(self) -> list[DastFinding]:
         with httpx.Client(base_url=self.base_url, timeout=10.0) as client:

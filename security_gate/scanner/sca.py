@@ -70,7 +70,7 @@ class ScaScanner(BaseScanner):
             return []
 
         try:
-            data = json.loads(result.stdout)
+            data = json.loads(result.stdout)  # gate: ignore — parses pip-audit subprocess output, controlled input
         except json.JSONDecodeError:
             return []
 

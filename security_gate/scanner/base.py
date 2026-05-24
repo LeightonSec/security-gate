@@ -34,8 +34,8 @@ class Finding:
     detail: str
     checklist_item: str
 
-    def sort_key(self) -> int:
-        return _SEVERITY_ORDER.get(self.severity, 99)
+    def sort_key(self) -> tuple:
+        return (_SEVERITY_ORDER.get(self.severity, 99), self.file, self.line)
 
     def to_dict(self) -> dict:
         return {
