@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-_SUPPRESS = re.compile(r"#\s*gate:\s*ignore", re.IGNORECASE)
+_SUPPRESS = re.compile(r"(?:#|//)\s*gate:\s*ignore", re.IGNORECASE)
 
 
 class Severity(str, Enum):
@@ -69,6 +69,13 @@ class BaseScanner:
             p for p in root.rglob("*.py")
             if not any(part in self._excludes for part in p.parts)
             and not any(part.endswith(".egg-info") for part in p.parts)
+        ]
+
+    def _ts_files(self, root: Path) -> list[Path]:
+        return [
+            p for p in root.rglob("*.ts")
+            if not any(part in self._excludes for part in p.parts)
+            and not p.name.endswith(".d.ts")
         ]
 
     def _suppressed(self, line: str) -> bool:

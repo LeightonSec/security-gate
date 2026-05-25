@@ -27,7 +27,10 @@ class DepsScanner(BaseScanner):
 
     def scan(self, root: Path) -> list[Finding]:
         findings = []
-        req_files = list(root.rglob("requirements*.txt"))
+        req_files = [
+            p for p in root.rglob("requirements*.txt")
+            if not any(part in self._excludes for part in p.parts)
+        ]
 
         for req_file in req_files:
             rel = self._rel(root, req_file)
@@ -145,6 +148,8 @@ class DepsScanner(BaseScanner):
 
     def _has_lock(self, root: Path) -> bool:
         for rf in root.rglob("requirements*.txt"):
+            if any(part in self._excludes for part in rf.parts):
+                continue
             try:
                 if any(_HASHED.search(l) for l in rf.read_text(encoding="utf-8", errors="replace").splitlines()):
                     return True

@@ -14,6 +14,7 @@ from security_gate.scanner.secrets import SecretsScanner
 from security_gate.scanner.retention import RetentionScanner
 from security_gate.scanner.validation import ValidationScanner
 from security_gate.scanner.deps import DepsScanner
+from security_gate.scanner.crypto import CryptoScanner
 from security_gate.report.generator import gate_passed
 from security_gate.scanner.base import Severity
 
@@ -445,3 +446,87 @@ def test_sca_handles_pip_audit_exit_1_with_findings(tmp_path):
         findings = ScaScanner().scan(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == Severity.MEDIUM
+
+
+# --- CryptoScanner ---
+
+def test_crypto_detects_math_random():
+    findings = CryptoScanner().scan(FIXTURES)
+    medium = [f for f in findings if "has_crypto" in f.file and f.severity == Severity.MEDIUM]
+    assert any("CRYPTO-01" in f.checklist_item for f in medium)
+
+
+def test_crypto_detects_cipheriv_without_aad():
+    findings = CryptoScanner().scan(FIXTURES)
+    high = [f for f in findings if "has_crypto" in f.file and f.severity == Severity.HIGH]
+    assert any("CRYPTO-02" in f.checklist_item for f in high)
+
+
+def test_crypto_detects_silent_catch():
+    findings = CryptoScanner().scan(FIXTURES)
+    medium = [f for f in findings if "has_crypto" in f.file and f.severity == Severity.MEDIUM]
+    assert any("CRYPTO-04" in f.checklist_item for f in medium)
+
+
+def test_crypto_detects_timing_unsafe_comparison():
+    findings = CryptoScanner().scan(FIXTURES)
+    high = [f for f in findings if "has_crypto" in f.file and f.severity == Severity.HIGH]
+    assert any("CRYPTO-05" in f.checklist_item for f in high)
+
+
+def test_crypto_detects_sensitive_material_in_log():
+    findings = CryptoScanner().scan(FIXTURES)
+    high = [f for f in findings if "has_crypto" in f.file and f.severity == Severity.HIGH]
+    assert any("CRYPTO-06" in f.checklist_item for f in high)
+
+
+def test_crypto_clean_fixture_no_findings():
+    clean_findings = [f for f in CryptoScanner().scan(FIXTURES) if "clean" in f.file]
+    assert clean_findings == []
+
+
+def test_crypto_cipheriv_with_aad_no_finding(tmp_path):
+    f = tmp_path / "enc.ts"
+    f.write_text(
+        'const cipher = createCipheriv("aes-256-gcm", key, iv)\n'
+        'cipher.setAAD(aad)\n'
+        'const out = cipher.update(data)\n'
+    )
+    findings = CryptoScanner().scan(tmp_path)
+    assert not any("CRYPTO-02" in f.checklist_item for f in findings)
+
+
+def test_crypto_cipheriv_without_aad_fires(tmp_path):
+    f = tmp_path / "enc.ts"
+    f.write_text(
+        'const cipher = createCipheriv("aes-256-gcm", key, iv)\n'
+        'const out = cipher.update(data)\n'
+    )
+    findings = CryptoScanner().scan(tmp_path)
+    assert len([f for f in findings if "CRYPTO-02" in f.checklist_item]) == 1
+
+
+def test_crypto_catch_with_logging_no_finding(tmp_path):
+    f = tmp_path / "dec.ts"
+    f.write_text(
+        '} catch (err) {\n'
+        '  console.error("failed:", err)\n'
+        '  return null\n'
+        '}\n'
+    )
+    findings = CryptoScanner().scan(tmp_path)
+    assert not any("CRYPTO-04" in f.checklist_item for f in findings)
+
+
+def test_crypto_null_comparison_excluded(tmp_path):
+    f = tmp_path / "check.ts"
+    f.write_text('if (this._keypair === null) throw new Error("not loaded")\n')
+    findings = CryptoScanner().scan(tmp_path)
+    assert not any("CRYPTO-05" in f.checklist_item for f in findings)
+
+
+def test_crypto_suppressed_line_skipped(tmp_path):
+    f = tmp_path / "enc.ts"
+    f.write_text('const id = Math.random().toString(36)  # gate: ignore\n')
+    findings = CryptoScanner().scan(tmp_path)
+    assert findings == []

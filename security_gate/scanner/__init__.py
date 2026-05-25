@@ -9,6 +9,7 @@ from .ai_ml import AiMlScanner
 from .web_app import WebAppScanner
 from .security_tool import SecurityToolScanner
 from .sca import ScaScanner
+from .crypto import CryptoScanner
 
 ALL_SCANNERS = [
     OutboundScanner,
@@ -21,4 +22,5 @@ ALL_SCANNERS = [
     WebAppScanner,
     SecurityToolScanner,
     ScaScanner,
+    CryptoScanner,
 ]
