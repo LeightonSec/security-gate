@@ -4,37 +4,42 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | ✅        |
+| latest (main) | ✅ |
+
+security-gate is under active development. Only the current `main` branch receives fixes.
 
 ## Reporting a vulnerability
 
-Do not open a public GitHub issue for security vulnerabilities.
+If you find a security vulnerability in security-gate — including false negatives in scanner rules, bypass techniques, or issues in the CLI itself — please report it privately before disclosing publicly.
 
-**Email:** firefoxxy101@gmail.com  
-**Subject line:** `[security-gate] Vulnerability report`
+**Contact:** open a [GitHub Security Advisory](https://github.com/LeightonSec/security-gate/security/advisories/new) on this repo.
 
-Include:
+Do not open a public issue for security vulnerabilities.
+
+## What to include
+
 - Description of the vulnerability
 - Steps to reproduce
-- Potential impact
-- Any suggested mitigations
+- Impact — what could an attacker achieve?
+- Suggested fix if you have one
 
-You will receive an acknowledgement within 48 hours. Confirmed vulnerabilities will be patched and disclosed publicly once a fix is available, with credit to the reporter if desired.
+## Response timeline
+
+- **Acknowledgement:** within 5 business days
+- **Assessment:** within 14 days
+- **Fix or mitigation:** timeline communicated after assessment
 
 ## Scope
 
 In scope:
-- False negatives that would allow a real violation to pass the gate undetected
-- Scanner bypass techniques (crafted input that defeats pattern matching)
-- Arbitrary code execution via malicious repo content during scanning
+- Scanner rules that can be bypassed to produce false negatives on real vulnerabilities
+- CLI input handling (path traversal, malicious fixture files)
 - Dependency vulnerabilities in security-gate itself
 
 Out of scope:
-- Findings in repos being scanned (those are the tool's intended output, not bugs)
 - False positives (open a regular issue)
+- Findings in codebases security-gate is run against (that's the tool working as intended)
 
-## Security design notes
+## Credit
 
-security-gate runs statically — it reads files, it does not execute them. The scanner processes untrusted repo content via regex and file I/O only. No subprocess calls, no imports of scanned code, no network calls during scanning.
-
-The tool gates itself on every CI run (`self-scan` job in `.github/workflows/ci.yml`).
+Responsible disclosures will be credited in the release notes unless you prefer to remain anonymous.
