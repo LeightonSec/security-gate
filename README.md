@@ -25,6 +25,29 @@ This is the difference between a security scanner and a security gate: the gate 
 | `ai_ml` | Unpinned model downloads, arbitrary code execution via `trust_remote_code`, telemetry sending training data to third parties |
 | `web_app` | Debug mode in production, SQL injection, CORS wildcard, unauthenticated state-changing endpoints |
 | `security_tool` | Test fixtures containing real attack payloads or path traversal strings — synthetic fixtures only |
+| `crypto` | Weak CSPRNG in crypto paths, unauthenticated GCM envelopes, HKDF undefined salt, silent catch blocks discarding auth failures, timing-unsafe secret comparison, sensitive key material in logs |
+
+## The crypto scanner that caught a live H2 finding
+
+v1.2 added a TypeScript-capable crypto scanner built from a Gate 0 manual audit of a post-quantum messaging protocol. Before a single fix was written, the scanner was run against the live codebase. It returned six production findings across seven files:
+
+```
+crypto  6 findings
+HIGH    src/crypto/hybrid.ts:30    CRYPTO-02  createCipheriv without setAAD — GCM envelope fields unauthenticated
+HIGH    src/ruflo/context.ts:17    CRYPTO-01  Math.random() used for session ID — not a CSPRNG
+HIGH    src/ruflo/taskqueue.ts:53  CRYPTO-01  Math.random() used for task ID — not a CSPRNG
+MEDIUM  src/guardian/client.ts:108 CRYPTO-04  silent catch — decryption failure swallowed with no log
+MEDIUM  src/ruflo/orchestrator.ts  CRYPTO-04  silent catch — decrypt error swallowed with no log
+LOW     src/crypto/hybrid.ts:70    CRYPTO-03  hkdf with undefined salt
+```
+
+The H2 finding was the one that mattered. `createCipheriv('aes-256-gcm', ...)` with no `setAAD` call meant the outer envelope fields — sender identity, recipient identity, timestamp — were completely unauthenticated. An attacker who intercepted a ciphertext could swap the recipient public key or replay the timestamp to bypass the 30-second replay window. The GCM auth tag covered the ciphertext body but not the wire format around it.
+
+The fix: `setAAD` now binds `version || type || sender_pk || recipient_pk || timestamp || mlkem_ciphertext` (1644 bytes) on both encrypt and decrypt. The scanner rule confirmed the fix: CRYPTO-02 clear on rescan.
+
+The two `CRYPTO-04` findings were found in production catch blocks — one in the orchestrator's decrypt path, one in the guardian's chain lookup. Both were silently returning `null`. Neither would have surfaced until a decryption failure was investigated manually.
+
+Every rule in the scanner was written from a finding first.
 
 ## DAST: the scanner that found a real bug
 
@@ -48,6 +71,12 @@ The `# gate: ignore` suppression pattern exists because the scanner is not alway
 
 ```python
 tokenizer = DistilBertTokenizerFast.from_pretrained(str(path))  # gate: ignore — local MODEL_PATH, not HuggingFace hub
+```
+
+TypeScript files use `//` comment syntax — both forms are accepted:
+
+```typescript
+const id = `${Date.now()}-${Math.random().toString(36).slice(2)}` // gate: ignore — test helper only, not a crypto path
 ```
 
 That decision lives in the code where the future reader will look for it.
@@ -88,6 +117,7 @@ security-gate scan /path/to/repo --output json --save
 | `ai_ml` | `from_pretrained()` without `revision=`, `trust_remote_code=True`, permissive HF telemetry | CRITICAL/HIGH/MEDIUM |
 | `web_app` | Debug mode, SQL injection, CORS wildcard, unauthenticated routes | CRITICAL/HIGH/MEDIUM |
 | `security_tool` | Path traversal and injection payload strings in test fixtures | MEDIUM |
+| `crypto` | Math.random in crypto paths, GCM without setAAD, HKDF undefined salt, silent catch in crypto context, timing-unsafe secret comparison, key material in logs | HIGH/MEDIUM/LOW |
 | `dast` | Runtime: headers, debug mode, stack trace leakage, LLM detection rate, model artefact leakage | CRITICAL/HIGH/MEDIUM/INFO |
 
 ## DAST checks (requires `--url`)
