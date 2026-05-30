@@ -27,8 +27,8 @@ _CRITICAL_PATTERNS: list[tuple[str, str]] = [
 ]
 
 _HIGH_PATTERNS: list[tuple[str, str]] = [
-    (r"API_KEY=[A-Za-z0-9+/_-]{20,}", "API key assignment"),
-    (r"SECRET_KEY=[A-Za-z0-9+/_-]{20,}", "secret key assignment"),
+    (r"API_KEY=[A-Za-z0-9+/]{32,}", "API key assignment"),
+    (r"SECRET_KEY=[A-Za-z0-9+/]{32,}", "secret key assignment"),
 ]
 
 _DEFAULT_TIMEOUT = 30
