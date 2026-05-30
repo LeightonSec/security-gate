@@ -15,6 +15,7 @@ from .git_history import GitHistoryScanner
 from .bare_suppress import BareSuppressScanner
 from .cmd_injection import CmdInjectionScanner
 from .ssti import SstiScanner
+from .ssrf import SsrfScanner
 
 ALL_SCANNERS = [
     OutboundScanner,
@@ -33,4 +34,5 @@ ALL_SCANNERS = [
     BareSuppressScanner,
     CmdInjectionScanner,
     SstiScanner,
+    SsrfScanner,
 ]

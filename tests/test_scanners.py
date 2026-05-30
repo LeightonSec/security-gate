@@ -18,6 +18,7 @@ from security_gate.scanner.git_history import GitHistoryScanner
 from security_gate.scanner.bare_suppress import BareSuppressScanner
 from security_gate.scanner.cmd_injection import CmdInjectionScanner
 from security_gate.scanner.ssti import SstiScanner
+from security_gate.scanner.ssrf import SsrfScanner
 from security_gate.scanner.deps import DepsScanner
 from security_gate.scanner.crypto import CryptoScanner
 from security_gate.report.generator import gate_passed
@@ -1030,3 +1031,74 @@ def test_ssti_self_scan_source_clean():
     source = pathlib.Path(__file__).parent.parent / "security_gate"
     findings = SstiScanner().scan(source)
     assert findings == [], f"ssti in source: {[(f.file, f.line, f.match) for f in findings]}"
+
+
+# --- SsrfScanner ---
+
+def test_ssrf_detects_requests_with_variable_url():
+    findings = SsrfScanner().scan(FIXTURES)
+    critical = [f for f in findings if "has_ssrf" in f.file and "requests" in f.detail]
+    assert len(critical) >= 1
+    assert all(f.severity == Severity.CRITICAL for f in critical)
+
+
+def test_ssrf_detects_httpx_with_fstring_url():
+    findings = SsrfScanner().scan(FIXTURES)
+    critical = [f for f in findings if "has_ssrf" in f.file and "httpx" in f.detail]
+    assert len(critical) >= 1
+
+
+def test_ssrf_detects_urllib_with_variable():
+    findings = SsrfScanner().scan(FIXTURES)
+    critical = [f for f in findings if "has_ssrf" in f.file and "urllib" in f.detail]
+    assert len(critical) >= 1
+
+
+def test_ssrf_literal_url_not_flagged(tmp_path):
+    f = tmp_path / "client.py"
+    f.write_text('import requests\nresponse = requests.get("https://api.example.com/data")\n')
+    findings = SsrfScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_ssrf_httpx_literal_not_flagged(tmp_path):
+    f = tmp_path / "client.py"
+    f.write_text('import httpx\nresponse = httpx.get("https://api.example.com")\n')
+    findings = SsrfScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_ssrf_requests_post_variable_fires(tmp_path):
+    f = tmp_path / "client.py"
+    f.write_text('import requests\nrequests.post(endpoint, json=data)\n')
+    findings = SsrfScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.CRITICAL
+
+
+def test_ssrf_gate_ignore_suppresses(tmp_path):
+    f = tmp_path / "client.py"
+    f.write_text(
+        'import requests\n'
+        'requests.get(settings.API_URL)  # gate: ignore — URL from application config, not user input\n'
+    )
+    findings = SsrfScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_ssrf_outbound_scanner_still_fires_on_literal(tmp_path):
+    # outbound_calls and ssrf are complementary — outbound fires on ALL calls,
+    # ssrf only fires when URL is non-literal. A literal URL should fire outbound but not ssrf.
+    f = tmp_path / "client.py"
+    f.write_text('import requests\nrequests.get("https://api.example.com")\n')
+    ssrf_findings = SsrfScanner().scan(tmp_path)
+    outbound_findings = OutboundScanner().scan(tmp_path)
+    assert ssrf_findings == []
+    assert len(outbound_findings) == 1
+
+
+def test_ssrf_self_scan_source_clean():
+    import pathlib
+    source = pathlib.Path(__file__).parent.parent / "security_gate"
+    findings = SsrfScanner().scan(source)
+    assert findings == [], f"ssrf in source: {[(f.file, f.line, f.match) for f in findings]}"
