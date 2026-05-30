@@ -48,37 +48,44 @@ class GitHistoryScanner(BaseScanner):
         if shallow_finding:
             findings.append(shallow_finding)
 
-        for pattern, label in _CRITICAL_PATTERNS:
+        all_patterns = (
+            [(p, l, Severity.CRITICAL) for p, l in _CRITICAL_PATTERNS] +
+            [(p, l, Severity.HIGH) for p, l in _HIGH_PATTERNS]
+        )
+        for pattern, label, severity in all_patterns:
             commits = self._grep_history(root, pattern, timeout)
-            if commits:
+            if commits is None:
                 findings.append(Finding(
                     scanner=self.name,
-                    severity=Severity.CRITICAL,
+                    severity=Severity.MEDIUM,
                     file="git history",
                     line=1,
-                    match=commits[0][:80],
+                    match=f"timed out after {timeout}s",
                     detail=(
-                        f"{label} pattern found in {len(commits)} commit diff(s) — "
-                        "recoverable even if later deleted. "
-                        f"Purge with git-filter-repo. Commits: {', '.join(commits[:3])}"
+                        f"git history scan timed out after {timeout}s — scan incomplete, "
+                        "secrets in history cannot be confirmed absent. "
+                        "Increase GIT_SCAN_TIMEOUT or run 'git fetch --unshallow' on shallow clones."
                     ),
                     checklist_item="GIT-HIST-1: No secrets in git history (purge with git-filter-repo)",
                 ))
-
-        for pattern, label in _HIGH_PATTERNS:
-            commits = self._grep_history(root, pattern, timeout)
+                return findings  # subsequent patterns will also time out
             if commits:
+                detail = (
+                    f"{label} pattern found in {len(commits)} commit diff(s) — "
+                    "recoverable even if later deleted. "
+                    f"Purge with git-filter-repo. Commits: {', '.join(commits[:3])}"
+                ) if severity == Severity.CRITICAL else (
+                    f"{label} pattern found in {len(commits)} commit diff(s) — "
+                    "may be a false positive on example values; verify manually. "
+                    f"Commits: {', '.join(commits[:3])}"
+                )
                 findings.append(Finding(
                     scanner=self.name,
-                    severity=Severity.HIGH,
+                    severity=severity,
                     file="git history",
                     line=1,
                     match=commits[0][:80],
-                    detail=(
-                        f"{label} pattern found in {len(commits)} commit diff(s) — "
-                        "may be a false positive on example values; verify manually. "
-                        f"Commits: {', '.join(commits[:3])}"
-                    ),
+                    detail=detail,
                     checklist_item="GIT-HIST-1: No secrets in git history (purge with git-filter-repo)",
                 ))
 
@@ -101,7 +108,8 @@ class GitHistoryScanner(BaseScanner):
             checklist_item="GIT-HIST-1: No secrets in git history (purge with git-filter-repo)",
         )
 
-    def _grep_history(self, root: Path, pattern: str, timeout: int) -> list[str]:
+    def _grep_history(self, root: Path, pattern: str, timeout: int) -> list[str] | None:
+        """Returns None on timeout, [] on no matches, [commit hashes] on matches."""
         try:
             result = subprocess.run(
                 [
@@ -117,6 +125,6 @@ class GitHistoryScanner(BaseScanner):
                 return []
             return [c.strip() for c in result.stdout.splitlines() if c.strip()]
         except subprocess.TimeoutExpired:
-            return []
+            return None
         except FileNotFoundError:
             return []

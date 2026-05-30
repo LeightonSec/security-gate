@@ -83,9 +83,65 @@ def test_validation_detects_unvalidated_flask_input():
     assert any("has_validation" in f for f in files)
 
 
-def test_validation_clean_fixture_suppressed_by_pydantic():
+def test_validation_clean_fixture_no_entry_points():
+    # clean.py has no request/json/yaml entry points — clean for the right reason
     clean_findings = [f for f in ValidationScanner().scan(FIXTURES) if "clean" in f.file]
     assert clean_findings == []
+
+
+def test_validation_pydantic_import_without_nearby_usage_still_fires(tmp_path):
+    # Pydantic imported at file level but entry point has no validation in proximity
+    f = tmp_path / "app.py"
+    f.write_text(
+        "from flask import request\n"
+        "from pydantic import BaseModel\n"
+        "\n"
+        "class Body(BaseModel):\n"
+        "    name: str\n"
+        "\n"
+        "def endpoint():\n"
+        "    data = request.get_json()\n"
+        "    name = data.get('name')\n"
+        "    age = data.get('age')\n"
+        "    result = name + str(age)\n"
+        "    return result\n"
+    )
+    findings = ValidationScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity.value == "HIGH"
+
+
+def test_validation_pydantic_in_proximity_suppresses_finding(tmp_path):
+    # Entry point immediately followed by model_validate — within window, no finding
+    f = tmp_path / "app.py"
+    f.write_text(
+        "from flask import request\n"
+        "from pydantic import BaseModel\n"
+        "\n"
+        "class Body(BaseModel):\n"
+        "    name: str\n"
+        "\n"
+        "def endpoint():\n"
+        "    data = request.get_json()\n"
+        "    body = Body.model_validate(data)\n"
+        "    return body.name\n"
+    )
+    findings = ValidationScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_validation_yaml_load_is_critical(tmp_path):
+    f = tmp_path / "loader.py"
+    f.write_text("import yaml\ndata = yaml.load(stream)\n")
+    findings = ValidationScanner().scan(tmp_path)
+    assert any(f.severity.value == "CRITICAL" for f in findings)
+
+
+def test_validation_yaml_safe_load_is_high(tmp_path):
+    f = tmp_path / "loader.py"
+    f.write_text("import yaml\ndata = yaml.safe_load(stream)\n")
+    findings = ValidationScanner().scan(tmp_path)
+    assert any(f.severity.value == "HIGH" for f in findings)
 
 
 def test_validation_gate_ignore_suppresses_finding(tmp_path):
@@ -418,24 +474,40 @@ def test_sca_skips_with_info_when_pip_audit_missing(tmp_path):
     assert "pip-audit not installed" in findings[0].detail
 
 
-def test_sca_parses_critical_cve(tmp_path):
+def test_sca_parses_cve_as_high(tmp_path):
+    # pip-audit JSON does not emit CVSS scores — all CVEs default to HIGH
     (tmp_path / "requirements.txt").write_text("requests==2.28.0\n")
     mock_output = json.dumps({"dependencies": [{"name": "requests", "version": "2.28.0", "vulns": [
-        {"id": "CVE-2023-9999", "description": "Critical RCE vulnerability", "cvss": 9.5}
+        {"id": "CVE-2023-9999", "description": "Critical RCE vulnerability", "aliases": ["CVE-2023-9999"]}
     ]}]})
     mock_result = MagicMock(stdout=mock_output, returncode=1)
     with patch("security_gate.scanner.sca.subprocess.run", return_value=mock_result):
         findings = ScaScanner().scan(tmp_path)
     assert len(findings) == 1
-    assert findings[0].severity == Severity.CRITICAL
+    assert findings[0].severity == Severity.HIGH
     assert "requests==2.28.0" in findings[0].match
     assert "CVE-2023-9999" in findings[0].detail
 
 
-def test_sca_parses_high_cve(tmp_path):
+def test_sca_includes_aliases_in_detail(tmp_path):
+    # CVE alias (from --aliases flag) appears in finding detail alongside GHSA id
     (tmp_path / "requirements.txt").write_text("urllib3==1.26.0\n")
     mock_output = json.dumps({"dependencies": [{"name": "urllib3", "version": "1.26.0", "vulns": [
-        {"id": "CVE-2023-1234", "description": "High severity request smuggling", "cvss": 7.5}
+        {"id": "GHSA-xxxx-xxxx-xxxx", "description": "Request smuggling", "aliases": ["CVE-2023-1234"]}
+    ]}]})
+    mock_result = MagicMock(stdout=mock_output, returncode=1)
+    with patch("security_gate.scanner.sca.subprocess.run", return_value=mock_result):
+        findings = ScaScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert "GHSA-xxxx-xxxx-xxxx" in findings[0].detail
+    assert "CVE-2023-1234" in findings[0].detail
+
+
+def test_sca_handles_pip_audit_exit_1_with_findings(tmp_path):
+    # Exit 1 = pip-audit found vulnerabilities (normal success exit code for findings)
+    (tmp_path / "requirements.txt").write_text("flask==2.0.0\n")
+    mock_output = json.dumps({"dependencies": [{"name": "flask", "version": "2.0.0", "vulns": [
+        {"id": "CVE-2023-5678", "description": "Flask vulnerability"}
     ]}]})
     mock_result = MagicMock(stdout=mock_output, returncode=1)
     with patch("security_gate.scanner.sca.subprocess.run", return_value=mock_result):
@@ -444,16 +516,16 @@ def test_sca_parses_high_cve(tmp_path):
     assert findings[0].severity == Severity.HIGH
 
 
-def test_sca_handles_pip_audit_exit_1_with_findings(tmp_path):
-    (tmp_path / "requirements.txt").write_text("flask==2.0.0\n")
-    mock_output = json.dumps({"dependencies": [{"name": "flask", "version": "2.0.0", "vulns": [
-        {"id": "CVE-2023-5678", "description": "Medium severity issue", "cvss": 5.0}
-    ]}]})
-    mock_result = MagicMock(stdout=mock_output, returncode=1)
-    with patch("security_gate.scanner.sca.subprocess.run", return_value=mock_result):
+def test_sca_timeout_emits_medium_finding(tmp_path):
+    import subprocess
+    (tmp_path / "requirements.txt").write_text("requests==2.28.0\n")
+    with patch("security_gate.scanner.sca.subprocess.run",
+               side_effect=subprocess.TimeoutExpired(cmd="pip-audit", timeout=120)):
         findings = ScaScanner().scan(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == Severity.MEDIUM
+    assert "timed out" in findings[0].detail
+    assert "incomplete" in findings[0].detail
 
 
 # --- CryptoScanner ---
@@ -681,15 +753,17 @@ def test_git_history_clean_on_empty_output(tmp_path):
     assert secret_findings == []
 
 
-def test_git_history_timeout_returns_empty(tmp_path):
+def test_git_history_timeout_emits_medium_finding(tmp_path):
     import subprocess
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
     with patch("security_gate.scanner.git_history.subprocess.run",
                side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30)):
         findings = GitHistoryScanner().scan(tmp_path)
-    secret_findings = [f for f in findings if f.severity in (Severity.CRITICAL, Severity.HIGH)]
-    assert secret_findings == []
+    medium = [f for f in findings if f.severity == Severity.MEDIUM]
+    assert len(medium) == 1
+    assert "timed out" in medium[0].detail
+    assert "incomplete" in medium[0].detail
 
 
 # --- WebAppScanner rate limiting (WEB-5) ---
@@ -1168,11 +1242,13 @@ def test_semgrep_clean_on_empty_results(tmp_path):
     assert findings == []
 
 
-def test_semgrep_timeout_returns_empty(tmp_path):
+def test_semgrep_timeout_emits_info_finding(tmp_path):
     with patch("security_gate.scanner.semgrep_scanner.subprocess.run",
                side_effect=subprocess.TimeoutExpired(cmd="semgrep", timeout=120)):
         findings = SemgrepScanner().scan(tmp_path)
-    assert findings == []
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.INFO
+    assert "timed out" in findings[0].detail
 
 
 def test_semgrep_error_exit_returns_empty(tmp_path):

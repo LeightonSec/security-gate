@@ -72,7 +72,18 @@ class SemgrepScanner(BaseScanner):
                 checklist_item="SEMGREP-0: semgrep installed for AST-based taint analysis",
             )]
         except subprocess.TimeoutExpired:
-            return []
+            return [Finding(
+                scanner=self.name,
+                severity=Severity.INFO,
+                file="semgrep",
+                line=1,
+                match=f"timed out after 120s",
+                detail=(
+                    "semgrep scan timed out after 120s — AST-based intra-procedural taint "
+                    "analysis incomplete. Run semgrep manually or increase timeout."
+                ),
+                checklist_item="SEMGREP-0: semgrep installed for AST-based taint analysis",
+            )]
 
         # Exit 0 = success no findings, exit 1 = success with findings, exit 2+ = error
         if result.returncode > 1 or not result.stdout.strip():

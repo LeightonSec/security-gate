@@ -7,15 +7,10 @@ from .base import BaseScanner, Finding, Severity
 
 _PINNED = re.compile(r"==")
 
-
-def _cvss_to_severity(score: float) -> Severity:
-    if score >= 9.0:
-        return Severity.CRITICAL
-    if score >= 7.0:
-        return Severity.HIGH
-    if score >= 4.0:
-        return Severity.MEDIUM
-    return Severity.LOW
+# pip-audit's JSON format does not include CVSS scores — VulnerabilityResult only
+# carries id, description, fix_versions, and aliases. All CVEs are rated HIGH by
+# default; check the CVE directly (nvd.nist.gov) for precise severity.
+_DEFAULT_CVE_SEVERITY = Severity.HIGH
 
 
 class ScaScanner(BaseScanner):
@@ -51,9 +46,10 @@ class ScaScanner(BaseScanner):
     def _audit_file(self, root: Path, req_file: Path) -> list[Finding]:
         try:
             result = subprocess.run(
-                ["pip-audit", "--format=json", "-r", str(req_file)],
+                ["pip-audit", "--format=json", "--desc", "-r", str(req_file)],
                 capture_output=True,
                 text=True,
+                timeout=120,
             )
         except FileNotFoundError:
             return [Finding(
@@ -63,6 +59,20 @@ class ScaScanner(BaseScanner):
                 line=1,
                 match="pip-audit not found",
                 detail="pip-audit not installed — SCA skipped. Install with: pip install pip-audit",
+                checklist_item="PHASE-2-6: No known CVEs in direct dependencies",
+            )]
+        except subprocess.TimeoutExpired:
+            return [Finding(
+                scanner=self.name,
+                severity=Severity.MEDIUM,
+                file=self._rel(root, req_file),
+                line=1,
+                match="pip-audit timed out after 120s",
+                detail=(
+                    "pip-audit timed out after 120s — CVE scan incomplete, "
+                    "vulnerable dependencies cannot be confirmed absent. "
+                    "Run pip-audit manually: pip-audit -r requirements.txt"
+                ),
                 checklist_item="PHASE-2-6: No known CVEs in direct dependencies",
             )]
 
@@ -79,37 +89,21 @@ class ScaScanner(BaseScanner):
             pkg_name = dep.get("name", "unknown")
             pkg_version = dep.get("version", "unknown")
             for vuln in dep.get("vulns", []):
-                cvss = self._extract_cvss(vuln)
-                severity = _cvss_to_severity(cvss)
-                cve_id = vuln.get("id", "UNKNOWN")
+                vuln_id = vuln.get("id", "UNKNOWN")
+                aliases = vuln.get("aliases", [])
+                alias_str = f" ({', '.join(aliases)})" if aliases else ""
                 description = vuln.get("description", "")[:120]
+                detail = f"{vuln_id}{alias_str}: {description}" if description else f"{vuln_id}{alias_str}"
                 findings.append(Finding(
                     scanner=self.name,
-                    severity=severity,
+                    severity=_DEFAULT_CVE_SEVERITY,
                     file=self._rel(root, req_file),
                     line=1,
                     match=f"{pkg_name}=={pkg_version}",
-                    detail=f"{cve_id}: {description}",
+                    detail=detail,
                     checklist_item="PHASE-2-6: No known CVEs in direct dependencies",
                 ))
         return findings
-
-    def _extract_cvss(self, vuln: dict) -> float:
-        for alias in vuln.get("aliases", []):
-            pass
-        for fix in vuln.get("fix_versions", []):
-            pass
-        # pip-audit embeds CVSS in the vulnerability object under various keys
-        score = vuln.get("cvss", vuln.get("severity_score", 0.0))
-        if isinstance(score, (int, float)):
-            return float(score)
-        # Some formats nest it under scores list
-        for s in vuln.get("scores", []):
-            if isinstance(s, dict):
-                return float(s.get("score", 0.0))
-            if isinstance(s, (int, float)):
-                return float(s)
-        return 0.0
 
     def _read_lines(self, path: Path) -> list[str]:
         try:
