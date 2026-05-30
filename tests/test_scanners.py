@@ -16,6 +16,7 @@ from security_gate.scanner.validation import ValidationScanner
 from security_gate.scanner.llm_injection import LlmInjectionScanner
 from security_gate.scanner.git_history import GitHistoryScanner
 from security_gate.scanner.bare_suppress import BareSuppressScanner
+from security_gate.scanner.cmd_injection import CmdInjectionScanner
 from security_gate.scanner.deps import DepsScanner
 from security_gate.scanner.crypto import CryptoScanner
 from security_gate.report.generator import gate_passed
@@ -850,3 +851,111 @@ def test_bare_suppress_self_scan_clean():
     root = pathlib.Path(__file__).parent.parent
     findings = BareSuppressScanner().scan(root)
     assert findings == [], f"Bare suppressions in codebase: {[(f.file, f.line) for f in findings]}"
+
+
+# --- CmdInjectionScanner ---
+
+def test_cmd_injection_detects_eval_with_variable():
+    findings = CmdInjectionScanner().scan(FIXTURES)
+    critical = [f for f in findings if "has_cmd_injection" in f.file and "eval" in f.detail]
+    assert len(critical) >= 1
+    assert all(f.severity == Severity.CRITICAL for f in critical)
+
+
+def test_cmd_injection_detects_exec_with_fstring():
+    findings = CmdInjectionScanner().scan(FIXTURES)
+    critical = [f for f in findings if "has_cmd_injection" in f.file and "exec" in f.detail]
+    assert len(critical) >= 1
+
+
+def test_cmd_injection_detects_os_system_with_variable():
+    findings = CmdInjectionScanner().scan(FIXTURES)
+    critical = [f for f in findings if "has_cmd_injection" in f.file and "os.system" in f.detail]
+    assert len(critical) >= 1
+
+
+def test_cmd_injection_detects_subprocess_shell_true():
+    findings = CmdInjectionScanner().scan(FIXTURES)
+    critical = [f for f in findings if "has_cmd_injection" in f.file and "shell=True" in f.detail]
+    assert len(critical) >= 1
+
+
+def test_cmd_injection_eval_literal_no_finding(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text('result = eval("2+2")\n')
+    findings = CmdInjectionScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_cmd_injection_exec_literal_no_finding(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text('exec("import os")\n')
+    findings = CmdInjectionScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_cmd_injection_os_system_literal_no_finding(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text('import os\nos.system("ls -la")\n')
+    findings = CmdInjectionScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_cmd_injection_subprocess_list_no_shell_no_finding(tmp_path):
+    # This is the pattern git_history.py uses — must not fire
+    f = tmp_path / "runner.py"
+    f.write_text(
+        'import subprocess\n'
+        'result = subprocess.run(\n'
+        '    ["git", "-C", str(root), "log", "--all", "--format=%H"],\n'
+        '    capture_output=True,\n'
+        '    text=True,\n'
+        '    timeout=30,\n'
+        ')\n'
+    )
+    findings = CmdInjectionScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_cmd_injection_subprocess_shell_false_explicit_no_finding(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text('import subprocess\nsubprocess.run(["ls", "-la"], shell=False)\n')
+    findings = CmdInjectionScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_cmd_injection_subprocess_shell_true_fires(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text('import subprocess\nsubprocess.run(cmd, shell=True)\n')
+    findings = CmdInjectionScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.CRITICAL
+
+
+def test_cmd_injection_all_severity_critical(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text(
+        'import os, subprocess\n'
+        'eval(user_input)\n'
+        'exec(user_input)\n'
+        'os.system(user_cmd)\n'
+        'subprocess.run(cmd, shell=True)\n'
+    )
+    findings = CmdInjectionScanner().scan(tmp_path)
+    assert len(findings) == 4
+    assert all(f.severity == Severity.CRITICAL for f in findings)
+
+
+def test_cmd_injection_gate_ignore_suppresses(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text('eval(user_code)  # gate: ignore — sandboxed execution environment\n')
+    findings = CmdInjectionScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_cmd_injection_self_scan_source_clean():
+    # scanner source files must not contain eval/exec/shell=True calls
+    import pathlib
+    source = pathlib.Path(__file__).parent.parent / "security_gate"
+    findings = CmdInjectionScanner().scan(source)
+    assert findings == [], f"cmd_injection in source: {[(f.file, f.line, f.match) for f in findings]}"
