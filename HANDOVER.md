@@ -6,6 +6,27 @@
 
 ---
 
+## Scanner Improvements Shipped 2026-05-30 EOD (138/138 tests, 16 scanners total)
+
+### Additional scanners (session 2)
+- `bare_suppress` — HIGH: bare `# gate: ignore` with no rationale. `\s*$` anchor prevents false positives on docstring/string mentions of the syntax. Self-scan test enforces the codebase itself stays clean.
+- `cmd_injection` — CRITICAL: eval/exec with non-literal arg, os.system with non-literal arg, subprocess.run/Popen/call with shell=True in 15-line window. Literal guard excludes string/bytes/raw prefixes; f-strings not excluded.
+- `ssti` — CRITICAL: render_template_string and jinja2.Template with non-literal argument. Same literal guard as cmd_injection.
+- Scope declaration added to CLI output: always-present dimmed note clarifying single-file scope limitation. Addresses "does clean mean clean" honesty problem from council review.
+- git_history HIGH patterns recalibrated: `[A-Za-z0-9+/_-]{20,}` → `[A-Za-z0-9+/]{32,}`. Removed hyphens/underscores, raised minimum to 32. Eliminated 3 false positives on `sk-ant-your-key-here` placeholder across multiple commits.
+- accepted-findings mechanism (`accepted.py`, CLI, report): `accepted-findings.toml` in scanned repo root, partition before gate decision, accepted findings shown dimmed with severity+rationale+reviewer.
+
+### LLM council findings (2026-05-30)
+- "Does clean mean clean?" — addressed with scope declaration in output
+- Command injection and SSTI were CRITICAL gaps — both shipped
+- Semgrep integration deferred: separate session, separate scope document
+- Pre-commit hook angle (Outsider): filed for future consideration
+- accepted-findings schema as credential — already interview-ready, not a product yet
+
+### Portfolio fixes this session
+- port-scanner: 8 bare `# gate: ignore` suppressions in tests/test_reporter.py — all updated with rationale
+- llm-honeypot: accepted-findings.toml updated for git_history false positives; HIGH pattern recalibration means these entries are now superseded but harmless
+
 ## Scanner Improvements Shipped 2026-05-30 (81/81 tests, 3 new scanners)
 
 ### scanner/llm_injection.py (new)
