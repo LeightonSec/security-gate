@@ -12,6 +12,7 @@ from .sca import ScaScanner
 from .crypto import CryptoScanner
 from .llm_injection import LlmInjectionScanner
 from .git_history import GitHistoryScanner
+from .bare_suppress import BareSuppressScanner
 
 ALL_SCANNERS = [
     OutboundScanner,
@@ -27,4 +28,5 @@ ALL_SCANNERS = [
     ScaScanner,
     CryptoScanner,
     GitHistoryScanner,
+    BareSuppressScanner,
 ]

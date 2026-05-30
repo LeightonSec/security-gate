@@ -15,6 +15,7 @@ from security_gate.scanner.retention import RetentionScanner
 from security_gate.scanner.validation import ValidationScanner
 from security_gate.scanner.llm_injection import LlmInjectionScanner
 from security_gate.scanner.git_history import GitHistoryScanner
+from security_gate.scanner.bare_suppress import BareSuppressScanner
 from security_gate.scanner.deps import DepsScanner
 from security_gate.scanner.crypto import CryptoScanner
 from security_gate.report.generator import gate_passed
@@ -84,7 +85,7 @@ def test_validation_clean_fixture_suppressed_by_pydantic():
 
 def test_validation_gate_ignore_suppresses_finding(tmp_path):
     f = tmp_path / "state.py"
-    f.write_text('data = json.loads(p.read_text())  # gate: ignore\n')
+    f.write_text('data = json.loads(p.read_text())  # gate: ignore — reads tool state file, not external input\n')
     findings = ValidationScanner().scan(tmp_path)
     assert findings == []
 
@@ -529,7 +530,7 @@ def test_crypto_null_comparison_excluded(tmp_path):
 
 def test_crypto_suppressed_line_skipped(tmp_path):
     f = tmp_path / "enc.ts"
-    f.write_text('const id = Math.random().toString(36)  # gate: ignore\n')
+    f.write_text('const id = Math.random().toString(36)  # gate: ignore — non-cryptographic session ID, not used in security context\n')
     findings = CryptoScanner().scan(tmp_path)
     assert findings == []
 
@@ -786,3 +787,66 @@ def test_web_app_rate_limit_no_finding_without_flask_route(tmp_path):
     findings = WebAppScanner().scan(tmp_path)
     web5 = [f for f in findings if "WEB-5" in f.checklist_item]
     assert web5 == []
+
+
+# --- BareSuppressScanner ---
+
+def test_bare_suppress_flags_python_bare_gate_ignore(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text('data = json.loads(x)  # gate: ignore\n')
+    findings = BareSuppressScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.HIGH
+
+
+def test_bare_suppress_flags_typescript_bare_gate_ignore(tmp_path):
+    f = tmp_path / "app.ts"
+    f.write_text('const id = Math.random()  // gate: ignore\n')
+    findings = BareSuppressScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.HIGH
+
+
+def test_bare_suppress_accepts_python_with_rationale(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text('data = json.loads(x)  # gate: ignore — reads tool state file\n')
+    findings = BareSuppressScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_bare_suppress_accepts_typescript_with_rationale(tmp_path):
+    f = tmp_path / "app.ts"
+    f.write_text('const id = Math.random()  // gate: ignore — non-cryptographic ID\n')
+    findings = BareSuppressScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_bare_suppress_ignores_documentation_mention_inline(tmp_path):
+    # 'gate: ignore' inside a string explanation — has text after 'ignore', not at EOL
+    f = tmp_path / "scanner.py"
+    f.write_text('detail = "Add # gate: ignore — <reason> to suppress this finding"\n')
+    findings = BareSuppressScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_bare_suppress_ignores_documentation_mention_in_comment(tmp_path):
+    # Comment explaining the syntax — text follows 'ignore', not at EOL
+    f = tmp_path / "scanner.py"
+    f.write_text('# Use # gate: ignore — reason to suppress a finding\n')
+    findings = BareSuppressScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_bare_suppress_detail_contains_format_hint(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text('secret = "x"  # gate: ignore\n')
+    findings = BareSuppressScanner().scan(tmp_path)
+    assert "gate: ignore — <reason>" in findings[0].detail
+
+
+def test_bare_suppress_self_scan_clean():
+    # The security-gate codebase itself should have no bare suppressions
+    import pathlib
+    root = pathlib.Path(__file__).parent.parent
+    findings = BareSuppressScanner().scan(root)
+    assert findings == [], f"Bare suppressions in codebase: {[(f.file, f.line) for f in findings]}"
