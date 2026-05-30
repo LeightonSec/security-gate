@@ -1,0 +1,83 @@
+# security-gate bundled semgrep rules
+#
+# Scope: AST-based intra-procedural taint analysis — tracks data flow through
+# variable reassignment chains within a single function. This is the improvement
+# over regex-based scanners (which lose track at reassignment), but it is NOT
+# cross-function taint. Cross-function analysis requires semgrep Pro.
+#
+# Severity: WARNING (MEDIUM in security-gate) — complements the direct
+# CRITICAL/HIGH findings from the regex scanners, not a replacement.
+
+rules:
+  - id: sgw-llm-injection-taint
+    mode: taint
+    languages: [python]
+    severity: WARNING
+    message: >
+      Request input flows into LLM API call via reassignment chain — prompt injection risk.
+      Validate and sanitize user input before passing to the model.
+      Note: intra-function taint only — cross-function paths require semgrep Pro.
+    pattern-sources:
+      - pattern: request.get_json(...)
+      - pattern: request.form
+      - pattern: request.args
+      - pattern: request.json
+      - pattern: request.data
+    pattern-sinks:
+      - pattern: $CLIENT.messages.create(...)
+      - pattern: $CLIENT.chat.completions.create(...)
+    metadata:
+      category: security
+      cwe: "CWE-77: Improper Neutralization"
+      checklist: LLM-INJ-2
+
+  - id: sgw-cmd-injection-taint
+    mode: taint
+    languages: [python]
+    severity: WARNING
+    message: >
+      Request input flows into command execution via reassignment chain — injection risk.
+      Never pass user-controlled data to eval, exec, or shell commands.
+      Note: intra-function taint only — cross-function paths require semgrep Pro.
+    pattern-sources:
+      - pattern: request.get_json(...)
+      - pattern: request.form
+      - pattern: request.args
+      - pattern: request.json
+      - pattern: request.data
+    pattern-sinks:
+      - pattern: eval(...)
+      - pattern: exec(...)
+      - pattern: os.system(...)
+      - pattern: subprocess.run(..., shell=True, ...)
+      - pattern: subprocess.Popen(..., shell=True, ...)
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      checklist: CMD-INJ-4
+
+  - id: sgw-ssrf-taint
+    mode: taint
+    languages: [python]
+    severity: WARNING
+    message: >
+      Request input flows into HTTP client URL via reassignment chain — SSRF risk.
+      Validate URLs against an allowlist before making outbound requests.
+      Note: intra-function taint only — cross-function paths require semgrep Pro.
+    pattern-sources:
+      - pattern: request.get_json(...)
+      - pattern: request.form
+      - pattern: request.args
+      - pattern: request.json
+      - pattern: request.data
+    pattern-sinks:
+      - pattern: requests.get(...)
+      - pattern: requests.post(...)
+      - pattern: requests.request(...)
+      - pattern: httpx.get(...)
+      - pattern: httpx.post(...)
+      - pattern: urllib.request.urlopen(...)
+    metadata:
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery"
+      checklist: SSRF-2

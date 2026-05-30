@@ -1,4 +1,5 @@
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from security_gate.scanner.bare_suppress import BareSuppressScanner
 from security_gate.scanner.cmd_injection import CmdInjectionScanner
 from security_gate.scanner.ssti import SstiScanner
 from security_gate.scanner.ssrf import SsrfScanner
+from security_gate.scanner.semgrep_scanner import SemgrepScanner
 from security_gate.scanner.deps import DepsScanner
 from security_gate.scanner.crypto import CryptoScanner
 from security_gate.report.generator import gate_passed
@@ -1102,3 +1104,95 @@ def test_ssrf_self_scan_source_clean():
     source = pathlib.Path(__file__).parent.parent / "security_gate"
     findings = SsrfScanner().scan(source)
     assert findings == [], f"ssrf in source: {[(f.file, f.line, f.match) for f in findings]}"
+
+
+# --- SemgrepScanner ---
+
+_SEMGREP_FINDING = {
+    "check_id": "security_gate.rules.semgrep_rules.sgw-llm-injection-taint",
+    "path": "",  # filled in per-test
+    "start": {"line": 20, "col": 5, "offset": 400},
+    "end": {"line": 20, "col": 60, "offset": 455},
+    "extra": {
+        "message": (
+            "Request input flows into LLM API call via reassignment chain — "
+            "prompt injection risk."
+        ),
+        "severity": "WARNING",
+        "lines": "    response = client.messages.create(",
+        "metadata": {},
+    },
+}
+
+
+def _semgrep_json(path: str, rule_id: str = "sgw-llm-injection-taint") -> str:
+    finding = dict(_SEMGREP_FINDING)
+    finding["path"] = path
+    finding["check_id"] = f"security_gate.rules.semgrep_rules.{rule_id}"
+    return json.dumps({"results": [finding], "errors": []})
+
+
+def test_semgrep_not_installed_emits_info(tmp_path):
+    with patch("security_gate.scanner.semgrep_scanner.subprocess.run",
+               side_effect=FileNotFoundError):
+        findings = SemgrepScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.INFO
+    assert "semgrep not installed" in findings[0].detail
+
+
+def test_semgrep_warning_maps_to_medium(tmp_path):
+    fake_file = tmp_path / "views.py"
+    fake_file.write_text("# placeholder\n")
+    mock = MagicMock(returncode=1, stdout=_semgrep_json(str(fake_file)))
+    with patch("security_gate.scanner.semgrep_scanner.subprocess.run", return_value=mock):
+        findings = SemgrepScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.MEDIUM
+
+
+def test_semgrep_rule_id_extracted_from_check_id(tmp_path):
+    fake_file = tmp_path / "views.py"
+    fake_file.write_text("# placeholder\n")
+    mock = MagicMock(returncode=1, stdout=_semgrep_json(str(fake_file), "sgw-ssrf-taint"))
+    with patch("security_gate.scanner.semgrep_scanner.subprocess.run", return_value=mock):
+        findings = SemgrepScanner().scan(tmp_path)
+    assert "sgw-ssrf-taint" in findings[0].detail
+    assert "SSRF-2" in findings[0].checklist_item
+
+
+def test_semgrep_clean_on_empty_results(tmp_path):
+    mock = MagicMock(returncode=0, stdout=json.dumps({"results": [], "errors": []}))
+    with patch("security_gate.scanner.semgrep_scanner.subprocess.run", return_value=mock):
+        findings = SemgrepScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_semgrep_timeout_returns_empty(tmp_path):
+    with patch("security_gate.scanner.semgrep_scanner.subprocess.run",
+               side_effect=subprocess.TimeoutExpired(cmd="semgrep", timeout=120)):
+        findings = SemgrepScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_semgrep_error_exit_returns_empty(tmp_path):
+    mock = MagicMock(returncode=2, stdout="")
+    with patch("security_gate.scanner.semgrep_scanner.subprocess.run", return_value=mock):
+        findings = SemgrepScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_semgrep_rules_file_exists():
+    from security_gate.scanner.semgrep_scanner import _RULES_FILE
+    assert _RULES_FILE.exists(), f"Rules file missing: {_RULES_FILE}"
+
+
+def test_semgrep_fixture_missed_by_regex_scanner():
+    # has_semgrep_taint.py uses 2-hop reassignment — confirm llm_injection regex misses it
+    # (semgrep would catch it; this test documents the gap the scanner closes)
+    findings = LlmInjectionScanner().scan(FIXTURES)
+    semgrep_fixture_hits = [f for f in findings if "has_semgrep_taint" in f.file]
+    assert semgrep_fixture_hits == [], (
+        "llm_injection regex scanner now catches multi-hop — "
+        "semgrep scanner may be redundant for this pattern"
+    )

@@ -16,6 +16,7 @@ from .bare_suppress import BareSuppressScanner
 from .cmd_injection import CmdInjectionScanner
 from .ssti import SstiScanner
 from .ssrf import SsrfScanner
+from .semgrep_scanner import SemgrepScanner
 
 ALL_SCANNERS = [
     OutboundScanner,
@@ -35,4 +36,5 @@ ALL_SCANNERS = [
     CmdInjectionScanner,
     SstiScanner,
     SsrfScanner,
+    SemgrepScanner,
 ]
