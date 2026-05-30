@@ -954,6 +954,14 @@ def test_cmd_injection_gate_ignore_suppresses(tmp_path):
     assert findings == []
 
 
+def test_cmd_injection_method_call_eval_not_flagged(tmp_path):
+    # model.eval() is PyTorch evaluation mode — not Python built-in eval()
+    f = tmp_path / "train.py"
+    f.write_text('import torch\nmodel.eval()\nmodel.eval()\n')
+    findings = CmdInjectionScanner().scan(tmp_path)
+    assert findings == []
+
+
 def test_cmd_injection_self_scan_source_clean():
     # scanner source files must not contain eval/exec/shell=True calls
     import pathlib

@@ -24,10 +24,12 @@ from pathlib import Path
 from .base import BaseScanner, Finding, Severity
 
 # eval/exec with non-literal argument.
+# (?<!\.) excludes method calls like model.eval() or obj.exec() — the built-in
+# eval/exec are never called as methods, so a preceding dot is always a false positive.
 # Negative lookahead excludes plain string literals and prefixed literals (b, r, u
 # and combinations). f/F are NOT excluded — f-strings with interpolation are unsafe.
 _EVAL_EXEC = re.compile(
-    r"\b(eval|exec)\s*\(\s*(?!['\"]|[bBrRuU]+['\"])"
+    r"(?<!\.)\b(eval|exec)\s*\(\s*(?!['\"]|[bBrRuU]+['\"])"
 )
 
 # os.system with non-literal argument — same literal guard.
