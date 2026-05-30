@@ -6,7 +6,35 @@
 
 ---
 
-## Scanner Improvements Shipped This Session (all pushed to main, 52/52 tests)
+## Scanner Improvements Shipped 2026-05-30 (81/81 tests, 3 new scanners)
+
+### scanner/llm_injection.py (new)
+- Two-pass taint tracker: collects variables assigned from `request.*` sources, then checks if they appear in LLM API sink calls within 15-line window without sanitization in between
+- Sanitization regex requires actual function call syntax (e.g. `sanitize_input(`) — avoids matching bare words in comments
+- Suppression via `# gate: ignore` inherited from BaseScanner
+- **Known limitation:** intra-function scope only — cross-function taint paths (e.g. helper functions calling LLM) are not followed. Documented in scanner docstring.
+- 6 tests covering: true positive, detail format, sanitized (clean), gate: ignore suppression, no findings without both patterns
+
+### scanner/git_history.py (new)
+- Uses `git log --all -G<pattern>` to find commits where secret patterns appear in diffs (additions OR deletions)
+- CRITICAL for high-precision formats (AKIA, sk-, ghp_, xox) — HIGH for broad patterns (API_KEY=, SECRET_KEY=)
+- Shallow clone guard: detects `.git/shallow` and emits INFO finding — "shallow clone, scan incomplete"
+- Configurable timeout via `GIT_SCAN_TIMEOUT` env var (default: 30s)
+- 7 tests covering: non-git dir skip, shallow clone INFO, unshallow hint, CRITICAL/HIGH mocks, clean output, timeout handling
+
+### scanner/web_app.py — WEB-5 rate limiting check (added)
+- File-level heuristic: if file has Flask route + LLM API call + no rate limiter import → MEDIUM on LLM call line
+- Per-sink fallback: checks 20-line window before LLM call for `@limiter.limit` / `@rate_limit` decorator
+- Suppression via `# gate: ignore` with rationale (e.g. `# gate: ignore — rate limited at nginx`)
+- **Known limitation:** cross-file Limiter config (app factory pattern) is invisible; infrastructure rate limiting is always invisible
+- 5 tests covering: unguarded route fires, flask_limiter import suppresses, decorator suppresses, gate: ignore suppresses, non-Flask LLM call does not fire
+
+### Known design gap identified
+- No `accepted-findings.yaml` mechanism — git_history false positives (e.g. example placeholders in committed .env.example files) block the gate on every scan with no inline suppression option. Candidate for v1.1.
+
+---
+
+## Scanner Improvements Shipped 2026-05-24 (52/52 tests)
 
 ### base.py
 - Added `_DEFAULT_EXCLUDE_DIRS`: `.venv`, `venv`, `dist`, `build`, `.eggs` now excluded by default
@@ -92,15 +120,25 @@ git push
 | pcap-analyser | `threat_intel.py:33` | outbound_calls HIGH | AbuseIPDB call — risk accepted in Gate 2 trust boundary mapping |
 | pcap-analyser | `app.py:33` | web_app MEDIUM | unauthenticated POST route — local analysis tool, no auth layer by design |
 | llm-honeypot | `app.py` | web_app MEDIUM | unauthenticated POST route — honeypot by design |
+| llm-honeypot | git history | git_history HIGH — commit `4562cfee` | `API_KEY=` broad pattern matched `ANTHROPIC_API_KEY=sk-ant-your-key-here` in `.env.example` — confirmed placeholder, not a real credential. Note: `# gate: ignore` added to `.env.example` for documentation but does not suppress the git history scanner (which reads commit diffs, not current file content). |
 
 ---
 
 ## Next Session Priority Order
 
 1. **Commit pending** — llm-honeypot and pcap-analyser (commands above)
-2. **Clone and scan port-scanner** — `git clone https://github.com/LeightonSec/port-scanner`
-3. **Hash-pin remaining repos** — incident-tracker, leightsec-template, password-policy-checker
-4. **Patch remaining HIGH findings** — intel-pipeline, unified-dashboard, intel-dashboard, ai-firewall, mfa-coverage-tracker
+2. **Open GitHub issue on security-gate** — `accepted-findings.yaml` v1.1 candidate: structured override file with `{commit, pattern, rationale, reviewer}` fields so git_history false positives (example placeholders in .env.example files) can be suppressed without rewriting history or blocking the gate indefinitely. First affected repo: llm-honeypot commit `4562cfee`.
+3. **Clone and scan port-scanner** — `git clone https://github.com/LeightonSec/port-scanner`
+4. **Hash-pin remaining repos** — incident-tracker, leightsec-template, password-policy-checker
+5. **Patch remaining HIGH findings** — intel-pipeline, unified-dashboard, intel-dashboard, ai-firewall, mfa-coverage-tracker
+
+---
+
+## Manual Review Flags (scanner cannot verify)
+
+| Repo | Location | Flag | Reason |
+|------|----------|------|--------|
+| llm-honeypot | `app.py:151` — `raw = request.get_json(silent=True) or {}` | llm_injection intra-function scope limitation | Request input enters a multi-step pipeline (sentiment → firewall → classifier) before reaching the Anthropic API call. Scanner correctly returned clean — taint path crosses function boundaries that regex-based taint tracking cannot follow. Verify manually in trust boundary review that `raw` is sanitised before reaching `client.messages.create`. |
 
 ---
 
@@ -113,3 +151,5 @@ git push
 | DDL excluded from SQL injection rule | ALTER/CREATE/DROP TABLE and PRAGMA can't be parameterised; flagging them as SQLi is always a false positive |
 | `--hash=` lines skipped in deps scanner | `_OPTION` pattern was `^\s*-[a-zA-Z]` — didn't match `--hash=` double-dash continuations |
 | Pydantic model for AbuseIPDB response in pcap-analyser | Silent wrong `is_malicious` results are worse than a crash for a security tool |
+| security-gate self-scan is informational only | Test fixtures in `tests/fixtures/` intentionally trigger every scanner — the repo cannot pass its own gate without an accepted-findings.toml covering all fixture findings. This is by design. The self-scan test (`test_bare_suppress_self_scan_clean`) scans the source tree only; the full CLI scan includes fixtures. Do not interpret a blocked self-scan as a real finding. |
+| bare_suppress severity is HIGH (not MEDIUM) | A bare `# gate: ignore` is an integrity violation against the gate itself — it bypasses a security control without an audit trail. A developer who suppresses something without rationale undermines the gate's enforceability more than any individual finding. HIGH blocks the gate, which is the correct forcing function. |
