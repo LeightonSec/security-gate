@@ -106,6 +106,11 @@ def scan(
     else:
         console.print("[bold red]❌ GATE BLOCKED[/bold red] — resolve CRITICAL/HIGH findings before proceeding\n")
 
+    console.print(
+        "[dim]Note: scanners cover single-file scope — cross-function taint, "
+        "cross-file configuration, and infrastructure controls require manual verification.[/dim]\n"
+    )
+
     # Active findings
     if active_findings:
         for f in sorted(active_findings, key=lambda x: x.sort_key()):
