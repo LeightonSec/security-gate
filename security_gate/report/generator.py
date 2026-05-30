@@ -33,18 +33,34 @@ def gate_passed(findings: list[Finding], profile: str = "default") -> bool:
     return counts[Severity.CRITICAL] == 0 and counts[Severity.HIGH] == 0
 
 
-def generate_json(findings: list[Finding], repo_path: str, profile: str = "default") -> str:
+def generate_json(
+    findings: list[Finding],
+    repo_path: str,
+    profile: str = "default",
+    accepted: list[tuple] = (),
+) -> str:
     counts = _counts(findings)
-    return json.dumps({
+    data: dict = {
         "generated": datetime.now(timezone.utc).isoformat(),
         "repo": repo_path,
         "gate": "PASSED" if gate_passed(findings, profile) else "BLOCKED",
         "summary": {s.value: counts[s] for s in Severity},
         "findings": [f.to_dict() for f in sorted(findings, key=lambda x: x.sort_key())],
-    }, indent=2)
+    }
+    if accepted:
+        data["accepted"] = [
+            {**f.to_dict(), "rationale": e.rationale, "reviewer": e.reviewer, "date": e.date}
+            for f, e in accepted
+        ]
+    return json.dumps(data, indent=2)
 
 
-def generate_markdown(findings: list[Finding], repo_path: str, profile: str = "default") -> str:
+def generate_markdown(
+    findings: list[Finding],
+    repo_path: str,
+    profile: str = "default",
+    accepted: list[tuple] = (),
+) -> str:
     counts = _counts(findings)
     passed = gate_passed(findings, profile)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -97,6 +113,22 @@ def generate_markdown(findings: list[Finding], repo_path: str, profile: str = "d
                     f"*Checklist:* `{f.checklist_item}`",
                     "",
                 ]
+
+    if accepted:
+        lines += ["---", "", "## Accepted findings (excluded from gate)", ""]
+        lines += [
+            "| Severity | Scanner | Finding | Rationale | Reviewer | Date |",
+            "|----------|---------|---------|-----------|----------|------|",
+        ]
+        for f, entry in accepted:
+            file_ref = getattr(f, "file", getattr(f, "endpoint", ""))
+            line_ref = getattr(f, "line", "")
+            loc = f"{file_ref}:{line_ref}" if line_ref else file_ref
+            lines.append(
+                f"| {f.severity.value} | {f.scanner} | `{loc}` "
+                f"| {entry.rationale} | {entry.reviewer} | {entry.date} |"
+            )
+        lines.append("")
 
     lines += [
         "---",

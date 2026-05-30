@@ -13,6 +13,8 @@ from security_gate.scanner.path_manip import PathManipScanner
 from security_gate.scanner.secrets import SecretsScanner
 from security_gate.scanner.retention import RetentionScanner
 from security_gate.scanner.validation import ValidationScanner
+from security_gate.scanner.llm_injection import LlmInjectionScanner
+from security_gate.scanner.git_history import GitHistoryScanner
 from security_gate.scanner.deps import DepsScanner
 from security_gate.scanner.crypto import CryptoScanner
 from security_gate.report.generator import gate_passed
@@ -530,3 +532,257 @@ def test_crypto_suppressed_line_skipped(tmp_path):
     f.write_text('const id = Math.random().toString(36)  # gate: ignore\n')
     findings = CryptoScanner().scan(tmp_path)
     assert findings == []
+
+
+# --- LlmInjectionScanner ---
+
+def test_llm_injection_detects_direct_passthrough():
+    findings = LlmInjectionScanner().scan(FIXTURES)
+    high = [f for f in findings if "has_llm_injection" in f.file and f.severity == Severity.HIGH]
+    assert len(high) >= 1
+    assert "user_prompt" in high[0].detail
+
+
+def test_llm_injection_detail_includes_source_line():
+    findings = LlmInjectionScanner().scan(FIXTURES)
+    high = [f for f in findings if "has_llm_injection" in f.file]
+    assert any("line" in f.detail for f in high)
+
+
+def test_llm_injection_clean_when_sanitized(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text(
+        'from flask import request\n'
+        'import anthropic\n'
+        'client = anthropic.Anthropic()\n'
+        'def chat():\n'
+        '    raw = request.get_json().get("prompt")\n'
+        '    clean = sanitize_input(raw)\n'
+        '    response = client.messages.create(\n'
+        '        messages=[{"role": "user", "content": clean}]\n'
+        '    )\n'
+    )
+    findings = LlmInjectionScanner().scan(tmp_path)
+    # 'raw' does not appear in the sink block; 'clean' is not tainted → no finding
+    assert findings == []
+
+
+def test_llm_injection_clean_when_tainted_var_absent_from_sink(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text(
+        'from flask import request\n'
+        'import anthropic\n'
+        'client = anthropic.Anthropic()\n'
+        'def chat():\n'
+        '    user_prompt = request.get_json().get("prompt")\n'
+        '    safe = sanitize_input(user_prompt)\n'
+        '    response = client.messages.create(\n'
+        '        messages=[{"role": "user", "content": safe}]\n'
+        '    )\n'
+    )
+    findings = LlmInjectionScanner().scan(tmp_path)
+    # sanitize_input( appears between source and sink → suppressed
+    assert findings == []
+
+
+def test_llm_injection_gate_ignore_suppresses(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text(
+        'from flask import request\n'
+        'import anthropic\n'
+        'client = anthropic.Anthropic()\n'
+        'def chat():\n'
+        '    user_prompt = request.get_json().get("prompt")\n'
+        '    response = client.messages.create(  # gate: ignore — validated upstream\n'
+        '        messages=[{"role": "user", "content": user_prompt}]\n'
+        '    )\n'
+    )
+    findings = LlmInjectionScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_llm_injection_no_findings_without_both_patterns(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text(
+        'from flask import request\n'
+        'def chat():\n'
+        '    user_prompt = request.get_json().get("prompt")\n'
+        '    return user_prompt\n'  # no LLM sink
+    )
+    findings = LlmInjectionScanner().scan(tmp_path)
+    assert findings == []
+
+
+# --- GitHistoryScanner ---
+
+def test_git_history_skips_non_git_dir(tmp_path):
+    findings = GitHistoryScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_git_history_shallow_clone_emits_info(tmp_path):
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "shallow").write_text("abc123\n")
+    findings = GitHistoryScanner().scan(tmp_path)
+    info = [f for f in findings if f.severity == Severity.INFO]
+    assert len(info) == 1
+    assert "shallow" in info[0].detail.lower()
+
+
+def test_git_history_shallow_clone_detail_includes_unshallow_hint(tmp_path):
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "shallow").write_text("abc123\n")
+    findings = GitHistoryScanner().scan(tmp_path)
+    info = [f for f in findings if f.severity == Severity.INFO]
+    assert "unshallow" in info[0].detail
+
+
+def test_git_history_critical_on_aws_key(tmp_path):
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    mock_result = MagicMock(returncode=0, stdout="abc123def456\n789abc012def\n")
+    with patch("security_gate.scanner.git_history.subprocess.run", return_value=mock_result):
+        findings = GitHistoryScanner().scan(tmp_path)
+    critical = [f for f in findings if f.severity == Severity.CRITICAL]
+    assert any("AWS" in f.detail for f in critical)
+
+
+def test_git_history_high_on_api_key_pattern(tmp_path):
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+
+    def side_effect(cmd, **kwargs):
+        pattern = next((a for a in cmd if a.startswith("-G")), "")
+        if "API_KEY" in pattern or "SECRET_KEY" in pattern:
+            return MagicMock(returncode=0, stdout="deadbeef1234\n")
+        return MagicMock(returncode=0, stdout="")
+
+    with patch("security_gate.scanner.git_history.subprocess.run", side_effect=side_effect):
+        findings = GitHistoryScanner().scan(tmp_path)
+    high = [f for f in findings if f.severity == Severity.HIGH]
+    assert len(high) >= 1
+
+
+def test_git_history_clean_on_empty_output(tmp_path):
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    mock_result = MagicMock(returncode=0, stdout="")
+    with patch("security_gate.scanner.git_history.subprocess.run", return_value=mock_result):
+        findings = GitHistoryScanner().scan(tmp_path)
+    secret_findings = [f for f in findings if f.severity in (Severity.CRITICAL, Severity.HIGH)]
+    assert secret_findings == []
+
+
+def test_git_history_timeout_returns_empty(tmp_path):
+    import subprocess
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    with patch("security_gate.scanner.git_history.subprocess.run",
+               side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30)):
+        findings = GitHistoryScanner().scan(tmp_path)
+    secret_findings = [f for f in findings if f.severity in (Severity.CRITICAL, Severity.HIGH)]
+    assert secret_findings == []
+
+
+# --- WebAppScanner rate limiting (WEB-5) ---
+
+def test_web_app_rate_limit_fires_on_unguarded_llm_route(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text(
+        'from flask import Flask, request\n'
+        'import anthropic\n'
+        'app = Flask(__name__)\n'
+        'client = anthropic.Anthropic()\n'
+        '@app.route("/chat", methods=["POST"])\n'
+        'def chat():\n'
+        '    response = client.messages.create(\n'
+        '        model="claude-3-5-sonnet-20241022",\n'
+        '        messages=[{"role": "user", "content": "hello"}],\n'
+        '    )\n'
+        '    return {}\n'
+    )
+    findings = WebAppScanner().scan(tmp_path)
+    medium = [f for f in findings if f.severity == Severity.MEDIUM and "WEB-5" in f.checklist_item]
+    assert len(medium) == 1
+
+
+def test_web_app_rate_limit_suppressed_by_flask_limiter_import(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text(
+        'from flask import Flask, request\n'
+        'from flask_limiter import Limiter\n'
+        'from flask_limiter.util import get_remote_address\n'
+        'import anthropic\n'
+        'app = Flask(__name__)\n'
+        'limiter = Limiter(app, key_func=get_remote_address, default_limits=["200/day"])\n'
+        'client = anthropic.Anthropic()\n'
+        '@app.route("/chat", methods=["POST"])\n'
+        'def chat():\n'
+        '    response = client.messages.create(\n'
+        '        model="claude-3-5-sonnet-20241022",\n'
+        '        messages=[{"role": "user", "content": "hello"}],\n'
+        '    )\n'
+        '    return {}\n'
+    )
+    findings = WebAppScanner().scan(tmp_path)
+    web5 = [f for f in findings if "WEB-5" in f.checklist_item]
+    assert web5 == []
+
+
+def test_web_app_rate_limit_suppressed_by_decorator(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text(
+        'from flask import Flask\n'
+        'import anthropic\n'
+        'app = Flask(__name__)\n'
+        'client = anthropic.Anthropic()\n'
+        '@app.route("/chat", methods=["POST"])\n'
+        '@limiter.limit("10 per minute")\n'
+        'def chat():\n'
+        '    response = client.messages.create(\n'
+        '        model="claude-3-5-sonnet-20241022",\n'
+        '        messages=[{"role": "user", "content": "hello"}],\n'
+        '    )\n'
+        '    return {}\n'
+    )
+    findings = WebAppScanner().scan(tmp_path)
+    web5 = [f for f in findings if "WEB-5" in f.checklist_item]
+    assert web5 == []
+
+
+def test_web_app_rate_limit_gate_ignore_suppresses_infrastructure_case(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text(
+        'from flask import Flask\n'
+        'import anthropic\n'
+        'app = Flask(__name__)\n'
+        'client = anthropic.Anthropic()\n'
+        '@app.route("/chat", methods=["POST"])\n'
+        'def chat():\n'
+        '    response = client.messages.create(  # gate: ignore — rate limited at nginx\n'
+        '        model="claude-3-5-sonnet-20241022",\n'
+        '        messages=[{"role": "user", "content": "hello"}],\n'
+        '    )\n'
+        '    return {}\n'
+    )
+    findings = WebAppScanner().scan(tmp_path)
+    web5 = [f for f in findings if "WEB-5" in f.checklist_item]
+    assert web5 == []
+
+
+def test_web_app_rate_limit_no_finding_without_flask_route(tmp_path):
+    f = tmp_path / "worker.py"
+    f.write_text(
+        'import anthropic\n'
+        'client = anthropic.Anthropic()\n'
+        'def run_batch():\n'
+        '    response = client.messages.create(\n'
+        '        model="claude-3-5-sonnet-20241022",\n'
+        '        messages=[{"role": "user", "content": "hello"}],\n'
+        '    )\n'
+    )
+    findings = WebAppScanner().scan(tmp_path)
+    web5 = [f for f in findings if "WEB-5" in f.checklist_item]
+    assert web5 == []

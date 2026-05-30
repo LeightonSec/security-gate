@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.table import Table
 
 from security_gate import __version__
+from security_gate.accepted import load_accepted, partition_findings
 from security_gate.scanner import ALL_SCANNERS
 from security_gate.scanner.base import Severity
 from security_gate.report.generator import generate_json, generate_markdown, gate_passed
@@ -74,15 +75,19 @@ def scan(
 
     console.print()
 
-    passed = gate_passed(all_findings)
+    # Partition accepted findings — only active findings affect the gate
+    accepted_entries = load_accepted(path)
+    active_findings, suppressed = partition_findings(all_findings, accepted_entries)
 
-    # Summary table
+    passed = gate_passed(active_findings)
+
+    # Summary table (active findings only)
     table = Table(show_header=True, header_style="bold")
     table.add_column("Severity")
     table.add_column("Count", justify="right")
 
     severity_counts = {s: 0 for s in Severity}
-    for f in all_findings:
+    for f in active_findings:
         severity_counts[f.severity] += 1
 
     for sev in Severity:
@@ -93,14 +98,17 @@ def scan(
     console.print(table)
     console.print()
 
+    if suppressed:
+        console.print(f"[dim]{len(suppressed)} finding(s) accepted via accepted-findings.toml[/dim]\n")
+
     if passed:
         console.print("[bold green]✅ GATE PASSED[/bold green] — no CRITICAL or HIGH findings\n")
     else:
         console.print("[bold red]❌ GATE BLOCKED[/bold red] — resolve CRITICAL/HIGH findings before proceeding\n")
 
-    # Detailed findings
-    if all_findings:
-        for f in sorted(all_findings, key=lambda x: x.sort_key()):
+    # Active findings
+    if active_findings:
+        for f in sorted(active_findings, key=lambda x: x.sort_key()):
             colour = _SEVERITY_COLOUR[f.severity]
             if hasattr(f, "file"):
                 console.print(
@@ -116,10 +124,28 @@ def scan(
             console.print(f"           {f.detail}")
             console.print(f"           [dim]→ {f.checklist_item}[/dim]\n")
 
+    # Accepted findings — severity stays visible
+    if suppressed:
+        console.print("[dim]── accepted findings (excluded from gate) ──[/dim]\n")
+        for f, entry in suppressed:
+            colour = _SEVERITY_COLOUR[f.severity]
+            if hasattr(f, "file"):
+                console.print(
+                    f"  [dim]ACCEPTED {f.severity.value:<8}[/dim] "
+                    f"[dim]{f.file}:{f.line}  {f.scanner}[/dim]"
+                )
+            else:
+                console.print(
+                    f"  [dim]ACCEPTED {f.severity.value:<8}[/dim] "
+                    f"[dim]{getattr(f, 'endpoint', '')}  {f.scanner}[/dim]"
+                )
+            console.print(f"           [dim]rationale: {entry.rationale}[/dim]")
+            console.print(f"           [dim]reviewer: {entry.reviewer}  {entry.date}[/dim]\n")
+
     # Save reports
     repo_str = str(path.resolve())
     if output in (OutputFormat.markdown, OutputFormat.both):
-        md = generate_markdown(all_findings, repo_str)
+        md = generate_markdown(active_findings, repo_str, accepted=suppressed)
         if save:
             out_path = Path("security-gate-report.md")
             out_path.write_text(md, encoding="utf-8")
@@ -128,7 +154,7 @@ def scan(
             console.print(md)
 
     if output in (OutputFormat.json, OutputFormat.both):
-        j = generate_json(all_findings, repo_str)
+        j = generate_json(active_findings, repo_str, accepted=suppressed)
         if save:
             out_path = Path("security-gate-report.json")
             out_path.write_text(j, encoding="utf-8")

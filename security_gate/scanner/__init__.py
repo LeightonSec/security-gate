@@ -10,6 +10,8 @@ from .web_app import WebAppScanner
 from .security_tool import SecurityToolScanner
 from .sca import ScaScanner
 from .crypto import CryptoScanner
+from .llm_injection import LlmInjectionScanner
+from .git_history import GitHistoryScanner
 
 ALL_SCANNERS = [
     OutboundScanner,
@@ -19,8 +21,10 @@ ALL_SCANNERS = [
     RetentionScanner,
     ValidationScanner,
     AiMlScanner,
+    LlmInjectionScanner,
     WebAppScanner,
     SecurityToolScanner,
     ScaScanner,
     CryptoScanner,
+    GitHistoryScanner,
 ]
