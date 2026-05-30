@@ -14,6 +14,7 @@ from .llm_injection import LlmInjectionScanner
 from .git_history import GitHistoryScanner
 from .bare_suppress import BareSuppressScanner
 from .cmd_injection import CmdInjectionScanner
+from .ssti import SstiScanner
 
 ALL_SCANNERS = [
     OutboundScanner,
@@ -31,4 +32,5 @@ ALL_SCANNERS = [
     GitHistoryScanner,
     BareSuppressScanner,
     CmdInjectionScanner,
+    SstiScanner,
 ]

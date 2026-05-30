@@ -17,6 +17,7 @@ from security_gate.scanner.llm_injection import LlmInjectionScanner
 from security_gate.scanner.git_history import GitHistoryScanner
 from security_gate.scanner.bare_suppress import BareSuppressScanner
 from security_gate.scanner.cmd_injection import CmdInjectionScanner
+from security_gate.scanner.ssti import SstiScanner
 from security_gate.scanner.deps import DepsScanner
 from security_gate.scanner.crypto import CryptoScanner
 from security_gate.report.generator import gate_passed
@@ -959,3 +960,65 @@ def test_cmd_injection_self_scan_source_clean():
     source = pathlib.Path(__file__).parent.parent / "security_gate"
     findings = CmdInjectionScanner().scan(source)
     assert findings == [], f"cmd_injection in source: {[(f.file, f.line, f.match) for f in findings]}"
+
+
+# --- SstiScanner ---
+
+def test_ssti_detects_render_template_string_with_variable():
+    findings = SstiScanner().scan(FIXTURES)
+    critical = [f for f in findings if "has_ssti" in f.file and "render_template_string" in f.detail]
+    assert len(critical) >= 1
+    assert all(f.severity == Severity.CRITICAL for f in critical)
+
+
+def test_ssti_detects_jinja2_template_with_variable():
+    findings = SstiScanner().scan(FIXTURES)
+    critical = [f for f in findings if "has_ssti" in f.file and "jinja2.Template" in f.detail]
+    assert len(critical) >= 1
+
+
+def test_ssti_literal_render_template_string_no_finding(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text('return render_template_string("<h1>Hello</h1>")\n')
+    findings = SstiScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_ssti_literal_jinja2_template_no_finding(tmp_path):
+    f = tmp_path / "render.py"
+    f.write_text('tmpl = jinja2.Template("Hello {{ name }}")\n')
+    findings = SstiScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_ssti_render_template_safe_not_flagged(tmp_path):
+    # render_template() (not render_template_string) is safe — auto-escaping
+    f = tmp_path / "views.py"
+    f.write_text('return render_template("index.html", name=user_name)\n')
+    findings = SstiScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_ssti_fstring_argument_fires(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text('return render_template_string(f"<h1>{user_name}</h1>")\n')
+    findings = SstiScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.CRITICAL
+
+
+def test_ssti_gate_ignore_suppresses(tmp_path):
+    f = tmp_path / "views.py"
+    f.write_text(
+        'return render_template_string(tmpl)  '
+        '# gate: ignore — template sourced from admin-only config, not user input\n'
+    )
+    findings = SstiScanner().scan(tmp_path)
+    assert findings == []
+
+
+def test_ssti_self_scan_source_clean():
+    import pathlib
+    source = pathlib.Path(__file__).parent.parent / "security_gate"
+    findings = SstiScanner().scan(source)
+    assert findings == [], f"ssti in source: {[(f.file, f.line, f.match) for f in findings]}"
