@@ -2,6 +2,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import httpx
+
 import pytest
 
 from unittest.mock import MagicMock, patch
@@ -452,7 +454,14 @@ def test_gate_default_profile_still_passes_medium():
 
 # --- ScaScanner ---
 
-def test_sca_clean_on_no_req_files(tmp_path):
+def _osv_mock(results: list[dict]) -> MagicMock:
+    mock = MagicMock()
+    mock.json.return_value = {"results": results}
+    mock.raise_for_status.return_value = None
+    return mock
+
+
+def test_sca_clean_on_no_dep_files(tmp_path):
     findings = ScaScanner().scan(tmp_path)
     assert findings == []
 
@@ -465,67 +474,146 @@ def test_sca_skips_with_info_when_no_pinned_deps(tmp_path):
     assert "no pinned versions" in findings[0].detail.lower()
 
 
-def test_sca_skips_with_info_when_pip_audit_missing(tmp_path):
+def test_sca_vuln_with_no_severity_defaults_to_high(tmp_path):
     (tmp_path / "requirements.txt").write_text("requests==2.28.0\n")
-    with patch("security_gate.scanner.sca.subprocess.run", side_effect=FileNotFoundError):
-        findings = ScaScanner().scan(tmp_path)
-    assert len(findings) == 1
-    assert findings[0].severity == Severity.INFO
-    assert "pip-audit not installed" in findings[0].detail
-
-
-def test_sca_parses_cve_as_high(tmp_path):
-    # pip-audit JSON does not emit CVSS scores — all CVEs default to HIGH
-    (tmp_path / "requirements.txt").write_text("requests==2.28.0\n")
-    mock_output = json.dumps({"dependencies": [{"name": "requests", "version": "2.28.0", "vulns": [
-        {"id": "CVE-2023-9999", "description": "Critical RCE vulnerability", "aliases": ["CVE-2023-9999"]}
-    ]}]})
-    mock_result = MagicMock(stdout=mock_output, returncode=1)
-    with patch("security_gate.scanner.sca.subprocess.run", return_value=mock_result):
+    osv_vuln = {
+        "id": "GHSA-xxxx-xxxx-xxxx",
+        "aliases": ["CVE-2023-9999"],
+        "summary": "Critical RCE vulnerability",
+        "database_specific": {},
+        "affected": [],
+    }
+    with patch("security_gate.scanner.sca.httpx.post",
+               return_value=_osv_mock([{"vulns": [osv_vuln]}])):
         findings = ScaScanner().scan(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == Severity.HIGH
-    assert "requests==2.28.0" in findings[0].match
+    assert findings[0].match == "requests==2.28.0"
     assert "CVE-2023-9999" in findings[0].detail
 
 
-def test_sca_includes_aliases_in_detail(tmp_path):
-    # CVE alias (from --aliases flag) appears in finding detail alongside GHSA id
-    (tmp_path / "requirements.txt").write_text("urllib3==1.26.0\n")
-    mock_output = json.dumps({"dependencies": [{"name": "urllib3", "version": "1.26.0", "vulns": [
-        {"id": "GHSA-xxxx-xxxx-xxxx", "description": "Request smuggling", "aliases": ["CVE-2023-1234"]}
-    ]}]})
-    mock_result = MagicMock(stdout=mock_output, returncode=1)
-    with patch("security_gate.scanner.sca.subprocess.run", return_value=mock_result):
+def test_sca_maps_critical_severity(tmp_path):
+    (tmp_path / "requirements.txt").write_text("pillow==9.0.0\n")
+    osv_vuln = {
+        "id": "GHSA-abcd-1234-abcd",
+        "aliases": ["CVE-2024-1234"],
+        "summary": "Remote code execution",
+        "database_specific": {"severity": "CRITICAL"},
+        "affected": [],
+    }
+    with patch("security_gate.scanner.sca.httpx.post",
+               return_value=_osv_mock([{"vulns": [osv_vuln]}])):
         findings = ScaScanner().scan(tmp_path)
     assert len(findings) == 1
-    assert "GHSA-xxxx-xxxx-xxxx" in findings[0].detail
-    assert "CVE-2023-1234" in findings[0].detail
+    assert findings[0].severity == Severity.CRITICAL
 
 
-def test_sca_handles_pip_audit_exit_1_with_findings(tmp_path):
-    # Exit 1 = pip-audit found vulnerabilities (normal success exit code for findings)
-    (tmp_path / "requirements.txt").write_text("flask==2.0.0\n")
-    mock_output = json.dumps({"dependencies": [{"name": "flask", "version": "2.0.0", "vulns": [
-        {"id": "CVE-2023-5678", "description": "Flask vulnerability"}
-    ]}]})
-    mock_result = MagicMock(stdout=mock_output, returncode=1)
-    with patch("security_gate.scanner.sca.subprocess.run", return_value=mock_result):
+def test_sca_maps_moderate_to_medium(tmp_path):
+    (tmp_path / "requirements.txt").write_text("cryptography==38.0.0\n")
+    osv_vuln = {
+        "id": "GHSA-mod-erat-efoo",
+        "aliases": ["CVE-2024-9876"],
+        "summary": "Moderate info disclosure",
+        "database_specific": {"severity": "MODERATE"},
+        "affected": [],
+    }
+    with patch("security_gate.scanner.sca.httpx.post",
+               return_value=_osv_mock([{"vulns": [osv_vuln]}])):
         findings = ScaScanner().scan(tmp_path)
     assert len(findings) == 1
-    assert findings[0].severity == Severity.HIGH
+    assert findings[0].severity == Severity.MEDIUM
 
 
-def test_sca_timeout_emits_medium_finding(tmp_path):
-    import subprocess
+def test_sca_reports_fix_version_in_detail(tmp_path):
+    (tmp_path / "requirements.txt").write_text("requests==2.25.0\n")
+    osv_vuln = {
+        "id": "GHSA-j8r2-6x86-q33q",
+        "aliases": ["CVE-2023-32681"],
+        "summary": ".netrc credentials leak",
+        "database_specific": {"severity": "MODERATE"},
+        "affected": [{
+            "ranges": [{
+                "type": "ECOSYSTEM",
+                "events": [{"introduced": "0"}, {"fixed": "2.31.0"}],
+            }]
+        }],
+    }
+    with patch("security_gate.scanner.sca.httpx.post",
+               return_value=_osv_mock([{"vulns": [osv_vuln]}])):
+        findings = ScaScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert "fix: 2.31.0" in findings[0].detail
+
+
+def test_sca_deduplicates_ghsa_and_pysec_same_cve(tmp_path):
+    (tmp_path / "requirements.txt").write_text("requests==2.25.0\n")
+    ghsa_vuln = {
+        "id": "GHSA-j8r2-6x86-q33q",
+        "aliases": ["CVE-2023-32681"],
+        "summary": ".netrc credentials leak",
+        "database_specific": {"severity": "MODERATE"},
+        "affected": [],
+    }
+    pysec_vuln = {
+        "id": "PYSEC-2023-74",
+        "aliases": ["CVE-2023-32681"],
+        "summary": ".netrc credentials leak",
+        "database_specific": {},
+        "affected": [],
+    }
+    with patch("security_gate.scanner.sca.httpx.post",
+               return_value=_osv_mock([{"vulns": [ghsa_vuln, pysec_vuln]}])):
+        findings = ScaScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert "CVE-2023-32681" in findings[0].detail
+
+
+def test_sca_pyproject_pinned_deps_scanned(tmp_path):
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\ndependencies = ["requests==2.25.0"]\n'
+    )
+    osv_vuln = {
+        "id": "GHSA-j8r2-6x86-q33q",
+        "aliases": ["CVE-2023-32681"],
+        "summary": ".netrc credentials leak",
+        "database_specific": {"severity": "MODERATE"},
+        "affected": [],
+    }
+    with patch("security_gate.scanner.sca.httpx.post",
+               return_value=_osv_mock([{"vulns": [osv_vuln]}])):
+        findings = ScaScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert "pyproject.toml" in findings[0].file
+    assert findings[0].match == "requests==2.25.0"
+
+
+def test_sca_osv_timeout_emits_medium(tmp_path):
     (tmp_path / "requirements.txt").write_text("requests==2.28.0\n")
-    with patch("security_gate.scanner.sca.subprocess.run",
-               side_effect=subprocess.TimeoutExpired(cmd="pip-audit", timeout=120)):
+    with patch("security_gate.scanner.sca.httpx.post",
+               side_effect=httpx.TimeoutException("timeout")):
         findings = ScaScanner().scan(tmp_path)
     assert len(findings) == 1
     assert findings[0].severity == Severity.MEDIUM
     assert "timed out" in findings[0].detail
     assert "incomplete" in findings[0].detail
+
+
+def test_sca_osv_network_error_emits_medium(tmp_path):
+    (tmp_path / "requirements.txt").write_text("requests==2.28.0\n")
+    with patch("security_gate.scanner.sca.httpx.post",
+               side_effect=httpx.ConnectError("no route")):
+        findings = ScaScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.MEDIUM
+    assert "OSV API error" in findings[0].detail
+
+
+def test_sca_clean_package_no_findings(tmp_path):
+    (tmp_path / "requirements.txt").write_text("flask==3.1.3\n")
+    with patch("security_gate.scanner.sca.httpx.post",
+               return_value=_osv_mock([{"vulns": []}])):
+        findings = ScaScanner().scan(tmp_path)
+    assert findings == []
 
 
 # --- CryptoScanner ---

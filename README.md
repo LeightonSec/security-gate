@@ -111,6 +111,7 @@ security-gate scan /path/to/repo --output json --save
 | `outbound_calls` | HTTP calls, Anthropic/OpenAI SDK, boto3 | HIGH |
 | `path_manipulation` | `sys.path.insert/append` | HIGH |
 | `unpinned_deps` | Missing version pins or hashes | HIGH/MEDIUM |
+| `sca` | Known CVEs in pinned PyPI deps — single OSV.dev batch query, deduplicates GHSA/PYSEC by CVE alias, surfaces fix version; covers requirements.txt and pyproject.toml | CRITICAL/HIGH/MEDIUM/LOW |
 | `hardcoded_secrets` | Insecure `getenv()` fallbacks, inline key assignments | CRITICAL/HIGH |
 | `retention_policy` | DB writes and file appends without TTL/purge logic | MEDIUM |
 | `missing_validation` | Flask input without Pydantic validation | HIGH |

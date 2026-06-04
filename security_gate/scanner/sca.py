@@ -1,33 +1,96 @@
-import json
 import re
-import subprocess
+import sys
 from pathlib import Path
+
+import httpx
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib  # type: ignore[no-redef]
 
 from .base import BaseScanner, Finding, Severity
 
-_PINNED = re.compile(r"==")
+_OSV_URL = "https://api.osv.dev/v1/querybatch"
+_TIMEOUT = 30.0
+_CHECKLIST = "PHASE-2-6: No known CVEs in direct dependencies"
+_REQ_LINE = re.compile(r"^([A-Za-z0-9_.\-]+)==([^\s;#\\]+)")
 
-# pip-audit's JSON format does not include CVSS scores — VulnerabilityResult only
-# carries id, description, fix_versions, and aliases. All CVEs are rated HIGH by
-# default; check the CVE directly (nvd.nist.gov) for precise severity.
-_DEFAULT_CVE_SEVERITY = Severity.HIGH
+_SEV_MAP = {
+    "CRITICAL": Severity.CRITICAL,
+    "HIGH": Severity.HIGH,
+    "MODERATE": Severity.MEDIUM,
+    "MEDIUM": Severity.MEDIUM,
+    "LOW": Severity.LOW,
+}
+
+
+def _parse_req_file(text: str) -> list[tuple[str, str]]:
+    result = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", "-")):
+            continue
+        m = _REQ_LINE.match(line)
+        if m:
+            result.append((m.group(1), m.group(2)))
+    return result
+
+
+def _parse_pyproject(text: str) -> list[tuple[str, str]]:
+    try:
+        data = tomllib.loads(text)
+    except Exception:
+        return []
+    project = data.get("project", {})
+    raw_deps: list[str] = list(project.get("dependencies", []))
+    for group in project.get("optional-dependencies", {}).values():
+        raw_deps.extend(group)
+    result = []
+    for dep in raw_deps:
+        m = re.match(r"^([A-Za-z0-9_.\-]+)==([^\s;,\]]+)", dep.strip())
+        if m:
+            result.append((m.group(1), m.group(2)))
+    return result
+
+
+def _canonical_id(vuln: dict) -> str:
+    for alias in vuln.get("aliases", []):
+        if alias.startswith("CVE-"):
+            return alias
+    for alias in vuln.get("aliases", []):
+        if alias.startswith("GHSA-"):
+            return alias
+    return vuln.get("id", "UNKNOWN")
+
+
+def _fix_version(vuln: dict) -> str | None:
+    for affected in vuln.get("affected", []):
+        for rng in affected.get("ranges", []):
+            for event in rng.get("events", []):
+                if "fixed" in event:
+                    return event["fixed"]
+    return None
+
+
+def _map_severity(vuln: dict) -> Severity:
+    sev = vuln.get("database_specific", {}).get("severity", "").upper()
+    if sev in _SEV_MAP:
+        return _SEV_MAP[sev]
+    return Severity.HIGH
 
 
 class ScaScanner(BaseScanner):
     name = "sca"
 
     def scan(self, root: Path) -> list[Finding]:
-        req_files = list(root.rglob("requirements*.txt"))
-        if not req_files:
-            return []
-
-        # Check for any pinned dep across all req files
-        has_pinned = any(
-            _PINNED.search(line)
-            for rf in req_files
-            for line in self._read_lines(rf)
+        pinned = self._collect_pinned(root)
+        has_dep_files = bool(
+            list(root.rglob("requirements*.txt")) + list(root.rglob("pyproject.toml"))
         )
-        if not has_pinned:
+        if not has_dep_files:
+            return []
+        if not pinned:
             return [Finding(
                 scanner=self.name,
                 severity=Severity.INFO,
@@ -35,78 +98,83 @@ class ScaScanner(BaseScanner):
                 line=1,
                 match="no pinned versions",
                 detail="SCA skipped — no pinned versions to query. Run unpinned_deps scanner first.",
-                checklist_item="PHASE-2-6: No known CVEs in direct dependencies",
+                checklist_item=_CHECKLIST,
             )]
+        return self._query_osv(root, pinned)
 
-        findings = []
-        for req_file in req_files:
-            findings.extend(self._audit_file(root, req_file))
-        return findings
+    def _collect_pinned(self, root: Path) -> list[tuple[str, str, str]]:
+        deps: list[tuple[str, str, str]] = []
+        for req_file in root.rglob("requirements*.txt"):
+            try:
+                text = req_file.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for name, version in _parse_req_file(text):
+                deps.append((name, version, self._rel(root, req_file)))
+        for pyproject in root.rglob("pyproject.toml"):
+            try:
+                text = pyproject.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for name, version in _parse_pyproject(text):
+                deps.append((name, version, self._rel(root, pyproject)))
+        return deps
 
-    def _audit_file(self, root: Path, req_file: Path) -> list[Finding]:
+    def _query_osv(
+        self, root: Path, pinned: list[tuple[str, str, str]]
+    ) -> list[Finding]:
+        queries = [
+            {"package": {"name": name, "ecosystem": "PyPI"}, "version": version}
+            for name, version, _ in pinned
+        ]
         try:
-            result = subprocess.run(
-                ["pip-audit", "--format=json", "--desc", "-r", str(req_file)],
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-        except FileNotFoundError:
-            return [Finding(
-                scanner=self.name,
-                severity=Severity.INFO,
-                file=self._rel(root, req_file),
-                line=1,
-                match="pip-audit not found",
-                detail="pip-audit not installed — SCA skipped. Install with: pip install pip-audit",
-                checklist_item="PHASE-2-6: No known CVEs in direct dependencies",
-            )]
-        except subprocess.TimeoutExpired:
+            resp = httpx.post(_OSV_URL, json={"queries": queries}, timeout=_TIMEOUT)  # gate: ignore — intentional outbound call to osv.dev CVE API; URL is a hardcoded constant, trust boundary documented in scanner design
+            resp.raise_for_status()
+            data = resp.json()
+        except httpx.TimeoutException:
             return [Finding(
                 scanner=self.name,
                 severity=Severity.MEDIUM,
-                file=self._rel(root, req_file),
+                file="requirements.txt",
                 line=1,
-                match="pip-audit timed out after 120s",
-                detail=(
-                    "pip-audit timed out after 120s — CVE scan incomplete, "
-                    "vulnerable dependencies cannot be confirmed absent. "
-                    "Run pip-audit manually: pip-audit -r requirements.txt"
-                ),
-                checklist_item="PHASE-2-6: No known CVEs in direct dependencies",
+                match="osv.dev timeout",
+                detail=f"OSV API timed out after {_TIMEOUT}s — CVE scan incomplete.",
+                checklist_item=_CHECKLIST,
+            )]
+        except Exception as exc:
+            return [Finding(
+                scanner=self.name,
+                severity=Severity.MEDIUM,
+                file="requirements.txt",
+                line=1,
+                match="osv.dev error",
+                detail=f"OSV API error — CVE scan incomplete: {exc}",
+                checklist_item=_CHECKLIST,
             )]
 
-        if not result.stdout.strip():
-            return []
-
-        try:
-            data = json.loads(result.stdout)  # gate: ignore — parses pip-audit subprocess output, controlled input
-        except json.JSONDecodeError:
-            return []
-
         findings = []
-        for dep in data.get("dependencies", []):
-            pkg_name = dep.get("name", "unknown")
-            pkg_version = dep.get("version", "unknown")
-            for vuln in dep.get("vulns", []):
-                vuln_id = vuln.get("id", "UNKNOWN")
-                aliases = vuln.get("aliases", [])
-                alias_str = f" ({', '.join(aliases)})" if aliases else ""
-                description = vuln.get("description", "")[:120]
-                detail = f"{vuln_id}{alias_str}: {description}" if description else f"{vuln_id}{alias_str}"
+        for idx, result in enumerate(data.get("results", [])):
+            if idx >= len(pinned):
+                break
+            name, version, src_file = pinned[idx]
+            seen: set[str] = set()
+            for vuln in result.get("vulns", []):
+                cid = _canonical_id(vuln)
+                if cid in seen:
+                    continue
+                seen.add(cid)
+                fix = _fix_version(vuln)
+                summary = vuln.get("summary", "")[:120]
+                detail = f"{cid}: {summary}"
+                if fix:
+                    detail += f" (fix: {fix})"
                 findings.append(Finding(
                     scanner=self.name,
-                    severity=_DEFAULT_CVE_SEVERITY,
-                    file=self._rel(root, req_file),
+                    severity=_map_severity(vuln),
+                    file=src_file,
                     line=1,
-                    match=f"{pkg_name}=={pkg_version}",
+                    match=f"{name}=={version}",
                     detail=detail,
-                    checklist_item="PHASE-2-6: No known CVEs in direct dependencies",
+                    checklist_item=_CHECKLIST,
                 ))
         return findings
-
-    def _read_lines(self, path: Path) -> list[str]:
-        try:
-            return path.read_text(encoding="utf-8", errors="replace").splitlines()
-        except OSError:
-            return []
