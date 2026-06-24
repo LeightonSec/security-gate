@@ -94,7 +94,7 @@
 | llm-honeypot | 0 | 0 | 1 | ✅ Patched — **commit pending** (hash-pinned requirements, Pydantic patches from 2026-05-22) |
 | market-recon | 0 | 3 | 6 | ✅ Pushed — 3H accepted (httpx outbound by design); 6M are pyproject.toml (req.txt is lock) |
 | pcap-analyser | 0 | 1 | 1 | ✅ Patched — **commit pending** (pydantic model for AbuseIPDB, hash-pinned deps) |
-| security-gate | 0 | 0 | 0 | ✅ Clean — self-scan passes |
+| security-gate | 0 | 0 | 0 | ✅ Clean — self-scan passes with teeth (CI blocks on CRITICAL/HIGH; `--exclude tests`; 4 pyproject MEDIUM accepted) |
 | threat-classifier | 0 | 0 | 0 | ✅ Clean |
 | llm-redteam (local) | — | — | — | Not scanned — generator only, stays local |
 
@@ -172,5 +172,5 @@ git push
 | DDL excluded from SQL injection rule | ALTER/CREATE/DROP TABLE and PRAGMA can't be parameterised; flagging them as SQLi is always a false positive |
 | `--hash=` lines skipped in deps scanner | `_OPTION` pattern was `^\s*-[a-zA-Z]` — didn't match `--hash=` double-dash continuations |
 | Pydantic model for AbuseIPDB response in pcap-analyser | Silent wrong `is_malicious` results are worse than a crash for a security tool |
-| security-gate self-scan is informational only | Test fixtures in `tests/fixtures/` intentionally trigger every scanner — the repo cannot pass its own gate without an accepted-findings.toml covering all fixture findings. This is by design. The self-scan test (`test_bare_suppress_self_scan_clean`) scans the source tree only; the full CLI scan includes fixtures. Do not interpret a blocked self-scan as a real finding. |
+| security-gate self-scan runs with teeth | CI runs `security-gate scan . --exclude tests` and blocks on CRITICAL/HIGH (no `--no-exit-code`). `tests/` is excluded because `tests/fixtures/` deliberately contains malicious patterns to verify the scanners fire — gating them is meaningless, not a real finding. Source self-matches (scanner regexes and docstring examples) are suppressed inline with `# gate: ignore - <reason>`; the 4 pyproject.toml compatible-release ranges are documented in `accepted-findings.toml`. Result: source + dependency manifests gate clean with real enforcement. |
 | bare_suppress severity is HIGH (not MEDIUM) | A bare `# gate: ignore` is an integrity violation against the gate itself — it bypasses a security control without an audit trail. A developer who suppresses something without rationale undermines the gate's enforceability more than any individual finding. HIGH blocks the gate, which is the correct forcing function. |

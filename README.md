@@ -153,6 +153,16 @@ Every gate report includes items the scanner cannot verify automatically:
 
 Exit code 1 on CRITICAL/HIGH — blocks merge until resolved.
 
+### It gates itself
+
+security-gate runs against its own repository in CI with the same teeth it gives everyone else:
+
+```yaml
+run: security-gate scan . --exclude tests
+```
+
+No `--no-exit-code` escape hatch — a CRITICAL or HIGH in the product source or dependency manifests blocks the build. `tests/` is excluded because `tests/fixtures/` deliberately contains malicious patterns to verify the scanners fire; gating them would be meaningless. Source self-matches (a scanner's own regex strings and docstring examples) are suppressed inline with `# gate: ignore - <reason>`, and the handful of remaining accepted findings are documented in `accepted-findings.toml` with a rationale and reviewer. The gate holds itself to its own standard.
+
 ## Framework alignment
 
 Aligned with OWASP SAMM v2.0, NIST SSDF SP 800-218 v1.1, NIST SSDF AI Profile SP 800-218A, and OWASP Top 10 2025.
