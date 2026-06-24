@@ -1,4 +1,3 @@
--r requirements.txt
 bandit
 pytest
 pytest-cov
