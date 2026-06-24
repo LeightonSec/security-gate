@@ -1,6 +1,7 @@
 # Synthetic fixture — triggers retention_policy scanner
 import sqlite3
 
+
 def log_event(data):
     with sqlite3.connect('events.db') as conn:
         conn.execute('INSERT INTO events (data) VALUES (?)', (data,))

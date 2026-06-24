@@ -1,11 +1,9 @@
-import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 
-from security_gate.dast.scanner import DastFinding, DastScanner, PIPELINE_THRESHOLD
+from security_gate.dast.scanner import DastFinding, DastScanner
 from security_gate.scanner.base import Severity
 
 

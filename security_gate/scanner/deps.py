@@ -41,7 +41,7 @@ class DepsScanner(BaseScanner):
                 continue
 
             lines = text.splitlines()
-            if any(_HASHED.search(l) for l in lines):
+            if any(_HASHED.search(line) for line in lines):
                 any_hashes = True
 
             if not any_hashes:
@@ -151,7 +151,7 @@ class DepsScanner(BaseScanner):
             if any(part in self._excludes for part in rf.parts):
                 continue
             try:
-                if any(_HASHED.search(l) for l in rf.read_text(encoding="utf-8", errors="replace").splitlines()):
+                if any(_HASHED.search(line) for line in rf.read_text(encoding="utf-8", errors="replace").splitlines()):
                     return True
             except OSError:
                 pass

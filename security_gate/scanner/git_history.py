@@ -49,8 +49,8 @@ class GitHistoryScanner(BaseScanner):
             findings.append(shallow_finding)
 
         all_patterns = (
-            [(p, l, Severity.CRITICAL) for p, l in _CRITICAL_PATTERNS] +
-            [(p, l, Severity.HIGH) for p, l in _HIGH_PATTERNS]
+            [(p, label, Severity.CRITICAL) for p, label in _CRITICAL_PATTERNS] +
+            [(p, label, Severity.HIGH) for p, label in _HIGH_PATTERNS]
         )
         for pattern, label, severity in all_patterns:
             commits = self._grep_history(root, pattern, timeout)

@@ -1,6 +1,6 @@
 # Synthetic fixture — triggers missing_validation scanner
+
 from flask import Flask, request
-import json
 
 app = Flask(__name__)
 
@@ -8,7 +8,7 @@ app = Flask(__name__)
 def submit():
     data = request.get_json()
     name = data['name']
-    return {'ok': True}
+    return {'ok': True, 'name': name}
 
 @app.route('/query')
 def query():

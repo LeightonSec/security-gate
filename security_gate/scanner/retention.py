@@ -36,7 +36,7 @@ class RetentionScanner(BaseScanner):
             # Strip comment lines before checking for retention signals — prevents
             # "# TODO: add retention policy" from suppressing real findings
             non_comment_text = "\n".join(
-                l for l in lines if not l.strip().startswith("#")
+                line for line in lines if not line.strip().startswith("#")
             )
             if _RETENTION_SIGNALS.search(non_comment_text):
                 continue

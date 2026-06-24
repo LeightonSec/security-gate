@@ -1,32 +1,30 @@
 import json
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import httpx
 
-import pytest
-
-from unittest.mock import MagicMock, patch
-from security_gate.scanner.ai_ml import AiMlScanner
-from security_gate.scanner.outbound import OutboundScanner
-from security_gate.scanner.sca import ScaScanner
-from security_gate.scanner.security_tool import SecurityToolScanner
-from security_gate.scanner.web_app import WebAppScanner
-from security_gate.scanner.path_manip import PathManipScanner
-from security_gate.scanner.secrets import SecretsScanner
-from security_gate.scanner.retention import RetentionScanner
-from security_gate.scanner.validation import ValidationScanner
-from security_gate.scanner.llm_injection import LlmInjectionScanner
-from security_gate.scanner.git_history import GitHistoryScanner
-from security_gate.scanner.bare_suppress import BareSuppressScanner
-from security_gate.scanner.cmd_injection import CmdInjectionScanner
-from security_gate.scanner.ssti import SstiScanner
-from security_gate.scanner.ssrf import SsrfScanner
-from security_gate.scanner.semgrep_scanner import SemgrepScanner
-from security_gate.scanner.deps import DepsScanner
-from security_gate.scanner.crypto import CryptoScanner
 from security_gate.report.generator import gate_passed
+from security_gate.scanner.ai_ml import AiMlScanner
+from security_gate.scanner.bare_suppress import BareSuppressScanner
 from security_gate.scanner.base import Severity
+from security_gate.scanner.cmd_injection import CmdInjectionScanner
+from security_gate.scanner.crypto import CryptoScanner
+from security_gate.scanner.deps import DepsScanner
+from security_gate.scanner.git_history import GitHistoryScanner
+from security_gate.scanner.llm_injection import LlmInjectionScanner
+from security_gate.scanner.outbound import OutboundScanner
+from security_gate.scanner.path_manip import PathManipScanner
+from security_gate.scanner.retention import RetentionScanner
+from security_gate.scanner.sca import ScaScanner
+from security_gate.scanner.secrets import SecretsScanner
+from security_gate.scanner.security_tool import SecurityToolScanner
+from security_gate.scanner.semgrep_scanner import SemgrepScanner
+from security_gate.scanner.ssrf import SsrfScanner
+from security_gate.scanner.ssti import SstiScanner
+from security_gate.scanner.validation import ValidationScanner
+from security_gate.scanner.web_app import WebAppScanner
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -38,7 +36,6 @@ def test_outbound_detects_requests_and_sdk():
 
 
 def test_outbound_clean_fixture_no_findings():
-    findings = OutboundScanner().scan(FIXTURES / "clean.py".replace("/", ""))
     # clean.py has no outbound calls
     clean_findings = [f for f in OutboundScanner().scan(FIXTURES) if "clean" in f.file]
     assert clean_findings == []

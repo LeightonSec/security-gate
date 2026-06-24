@@ -4,7 +4,6 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import httpx
 
@@ -35,6 +34,27 @@ _CHECKLIST = {
     "DAST-5": "No internal model artefact leakage in API responses (logits, token_ids, hidden_states)",
 }
 
+_SEVERITY_ORDER = {
+    Severity.CRITICAL: 0, Severity.HIGH: 1,
+    Severity.MEDIUM: 2, Severity.LOW: 3, Severity.INFO: 4,
+}
+
+_REQUIRED_HEADERS = [
+    ("x-content-type-options",
+     "X-Content-Type-Options header missing — browsers may MIME-sniff responses"),
+    ("x-frame-options",
+     "X-Frame-Options header missing — clickjacking possible"),
+    ("content-security-policy",
+     "Content-Security-Policy header missing — XSS mitigation absent"),
+]
+
+_DEBUG_MARKERS = [
+    ("werkzeug debugger",
+     "Flask Werkzeug debugger active — interactive console exposed"),
+    ("debugger is active",
+     "Flask debugger banner present in response"),
+]
+
 
 @dataclass
 class DastFinding:
@@ -42,17 +62,13 @@ class DastFinding:
     severity: Severity
     endpoint: str
     payload_variant: str
-    status_code: Optional[int]  # None for synthetic findings with no real HTTP response
+    status_code: int | None  # None for synthetic findings with no real HTTP response
     response_snippet: str
     detail: str
     checklist_item: str
 
     def sort_key(self) -> tuple:
-        _ORDER = {
-            Severity.CRITICAL: 0, Severity.HIGH: 1,
-            Severity.MEDIUM: 2, Severity.LOW: 3, Severity.INFO: 4,
-        }
-        return (_ORDER[self.severity], self.endpoint, self.payload_variant)
+        return (_SEVERITY_ORDER[self.severity], self.endpoint, self.payload_variant)
 
     def to_dict(self) -> dict:
         return {
@@ -70,7 +86,7 @@ class DastFinding:
 class DastScanner:
     name = "dast"
 
-    def __init__(self, base_url: str, payloads_path: Optional[Path] = None) -> None:
+    def __init__(self, base_url: str, payloads_path: Path | None = None) -> None:
         self.base_url = base_url.rstrip("/")
         self._payloads_path = (
             payloads_path or Path(__file__).parent / "fixtures" / "probes.jsonl"
@@ -98,15 +114,7 @@ class DastScanner:
     def _check_headers(self, client: httpx.Client) -> list[DastFinding]:
         findings = []
         resp = client.get("/")
-        _REQUIRED = [
-            ("x-content-type-options",
-             "X-Content-Type-Options header missing — browsers may MIME-sniff responses"),
-            ("x-frame-options",
-             "X-Frame-Options header missing — clickjacking possible"),
-            ("content-security-policy",
-             "Content-Security-Policy header missing — XSS mitigation absent"),
-        ]
-        for header, detail in _REQUIRED:
+        for header, detail in _REQUIRED_HEADERS:
             if header not in resp.headers:
                 findings.append(DastFinding(
                     scanner=self.name, severity=Severity.MEDIUM,
@@ -123,12 +131,6 @@ class DastScanner:
         # not on a clean GET /.
         resp = client.get("/dast-debug-probe")
         body = resp.text.lower()
-        _DEBUG_MARKERS = [
-            ("werkzeug debugger",
-             "Flask Werkzeug debugger active — interactive console exposed"),
-            ("debugger is active",
-             "Flask debugger banner present in response"),
-        ]
         for marker, detail in _DEBUG_MARKERS:
             if marker in body:
                 findings.append(DastFinding(

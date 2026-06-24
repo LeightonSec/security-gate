@@ -1,6 +1,6 @@
 """Dirty fixture for SstiScanner — both violation types present."""
 import jinja2
-from flask import render_template_string, request
+from flask import render_template_string
 
 
 # CRITICAL: render_template_string with variable argument

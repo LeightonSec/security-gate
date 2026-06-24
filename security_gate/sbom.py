@@ -4,7 +4,6 @@ Reads requirements*.txt files, outputs a spec-compliant JSON SBOM.
 No runtime dependencies beyond the stdlib.
 """
 
-import hashlib
 import json
 import re
 import uuid

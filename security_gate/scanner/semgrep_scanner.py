@@ -77,7 +77,7 @@ class SemgrepScanner(BaseScanner):
                 severity=Severity.INFO,
                 file="semgrep",
                 line=1,
-                match=f"timed out after 120s",
+                match="timed out after 120s",
                 detail=(
                     "semgrep scan timed out after 120s — AST-based intra-procedural taint "
                     "analysis incomplete. Run semgrep manually or increase timeout."

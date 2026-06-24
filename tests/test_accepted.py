@@ -1,8 +1,7 @@
-from pathlib import Path
 
-from security_gate.accepted import AcceptedEntry, load_accepted, partition_findings
-from security_gate.scanner.base import Finding, Severity
+from security_gate.accepted import load_accepted, partition_findings
 from security_gate.report.generator import gate_passed
+from security_gate.scanner.base import Finding, Severity
 
 _TOML = """\
 [[accepted]]

@@ -99,9 +99,9 @@ def generate_markdown(
                 lines += [
                     f"**{emoji} {f.severity.value}** — `{f.file}:{f.line}`",
                     f"> {f.detail}",
-                    f"```",
+                    "```",
                     f"{f.match}",
-                    f"```",
+                    "```",
                     f"*Checklist:* `{f.checklist_item}`",
                     "",
                 ]

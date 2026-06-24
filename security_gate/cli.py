@@ -8,10 +8,10 @@ from rich.table import Table
 
 from security_gate import __version__
 from security_gate.accepted import load_accepted, partition_findings
+from security_gate.report.generator import gate_passed, generate_json, generate_markdown
+from security_gate.sbom import generate_sbom_json
 from security_gate.scanner import ALL_SCANNERS
 from security_gate.scanner.base import Severity
-from security_gate.report.generator import generate_json, generate_markdown, gate_passed
-from security_gate.sbom import generate_sbom_json
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
