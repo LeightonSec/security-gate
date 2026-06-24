@@ -52,7 +52,10 @@ jobs:
           pip install -e .
 
       - name: Run security-gate against itself
-        run: security-gate scan . --output json --save --no-exit-code
+        # Real teeth: the self-scan blocks on CRITICAL/HIGH like any other repo.
+        # tests/ is excluded because tests/fixtures/ deliberately contains malicious
+        # patterns to verify the scanners fire; accepted-findings.toml documents the rest.
+        run: security-gate scan . --exclude tests --output json --save
 
       - name: Upload gate report
         uses: actions/upload-artifact@v4

@@ -8,13 +8,13 @@ from .base import BaseScanner, Finding, Severity
 # All other entry points are HIGH (missing validation boundary).
 _ENTRY_POINTS: list[tuple[re.Pattern, str, Severity]] = [
     (re.compile(r"request\.get_json\s*\("),
-     "Flask request.get_json() — validate with Pydantic before use",
+     "Flask request.get_json() — validate with Pydantic before use",  # gate: ignore - scanner detail string, not a runtime call
      Severity.HIGH),
     (re.compile(r"request\.(form|args|data|json)\b"),
      "Flask request input — validate with Pydantic before use",
      Severity.HIGH),
     (re.compile(r"response\.json\s*\(\s*\)"),
-     "External API response.json() used directly — validate schema before processing",
+     "External API response.json() used directly — validate schema before processing",  # gate: ignore - scanner detail string, not a runtime call
      Severity.HIGH),
     (re.compile(r"json\.loads\s*\("),
      "json.loads on external data — validate structure before use",
@@ -23,7 +23,7 @@ _ENTRY_POINTS: list[tuple[re.Pattern, str, Severity]] = [
      "yaml.safe_load — validate schema before use",
      Severity.HIGH),
     (re.compile(r"yaml\.load\s*\("),
-     "yaml.load (unsafe) — arbitrary code execution if input is attacker-controlled; "
+     "yaml.load (unsafe) — arbitrary code execution if input is attacker-controlled; "  # gate: ignore - scanner detail string, not a runtime call
      "use yaml.safe_load and validate schema",
      Severity.CRITICAL),
 ]

@@ -13,7 +13,7 @@ String concatenation starting with a literal (e.g. requests.get with BASE_URL + 
 is not detected. Config constants (e.g. requests.get with settings.API_URL) will fire
 as false positives — suppress with: # gate: ignore — URL from application config
 
-  Safe:    requests.get("https://api.example.com/data")
+  Safe:    requests.get("https://api.example.com/data")  # gate: ignore - docstring example, not executed
   Unsafe:  requests.get(user_url)          # gate: ignore — docstring example, not executed
   Unsafe:  requests.get(f"http://{host}")  # gate: ignore — docstring example, not executed
 """

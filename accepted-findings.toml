@@ -1,0 +1,42 @@
+# Accepted findings for security-gate scanning itself.
+#
+# Structured suppression for findings that are real-but-accepted, each with a
+# rationale and a reviewer. Inline "# gate: ignore - <reason>" is preferred for
+# source code; this file is for findings that cannot be suppressed inline.
+#
+# The test suite (tests/) is excluded from the self-scan via "--exclude tests"
+# rather than listed here: tests/fixtures/ deliberately contains malicious
+# patterns to verify the scanners fire, so gating them is meaningless. Excluding
+# them keeps the gate's teeth on shipped product code and dependency manifests.
+
+[[accepted]]
+scanner   = "unpinned_deps"
+file      = "pyproject.toml"
+match     = "typer>=0.12.0"
+rationale = "Library runtime dependency. An installable package declares compatible-release ranges in pyproject; exact reproducible versions are pinned with hashes in requirements.txt / requirements-dev.txt."
+reviewer  = "leighton"
+date      = "2026-06-24"
+
+[[accepted]]
+scanner   = "unpinned_deps"
+file      = "pyproject.toml"
+match     = "rich>=13.0.0"
+rationale = "Library runtime dependency. Compatible-release range in pyproject; exact pin lives in the requirements lockfiles."
+reviewer  = "leighton"
+date      = "2026-06-24"
+
+[[accepted]]
+scanner   = "unpinned_deps"
+file      = "pyproject.toml"
+match     = "tomli>=2.0.0"
+rationale = "Library runtime dependency (Python < 3.11 only). Compatible-release range in pyproject; exact pin lives in the requirements lockfiles."
+reviewer  = "leighton"
+date      = "2026-06-24"
+
+[[accepted]]
+scanner   = "unpinned_deps"
+file      = "pyproject.toml"
+match     = "httpx>=0.27.0"
+rationale = "Library runtime dependency. Compatible-release range in pyproject; exact pin lives in the requirements lockfiles."
+reviewer  = "leighton"
+date      = "2026-06-24"

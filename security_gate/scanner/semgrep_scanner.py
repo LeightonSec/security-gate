@@ -4,10 +4,10 @@ Runs bundled custom taint rules via the semgrep CLI. Provides AST-based
 intra-procedural taint tracking — follows data through variable reassignment
 chains within a function. This catches multi-hop cases that regex scanners miss:
 
-  data = request.get_json()
+  data = request.get_json()      # gate: ignore - docstring example, not executed
   prompt = data.get("message")
   user_msg = prompt              # regex scanner loses track here
-  client.messages.create(...)   # semgrep still follows the taint
+  client.messages.create(...)    # gate: ignore - docstring example, not executed (semgrep still follows the taint)
 
 Scope: intra-function only. Cross-function taint (data passing through a helper
 function call) requires semgrep Pro. This scanner complements the regex scanners
