@@ -224,6 +224,37 @@ def test_validation_unrelated_validation_in_window_still_fires(tmp_path):
     assert findings[0].line == 3
 
 
+def test_validation_non_model_capwords_does_not_suppress(tmp_path):
+    # A non-validating CapWords constructor (Dict/Request/Response/Exception) must
+    # NOT suppress a real finding — only model-named constructors count as validation.
+    srcs = {
+        "resp.py": "from flask import request\ndef h():\n    raw = request.get_json()\n    return Response(raw)\n",
+        "dct.py": "from flask import request\ndef h():\n    data = request.get_json()\n    return Dict(**data)\n",
+        "exc.py": "from flask import request\ndef h():\n    raw = request.get_json()\n    raise Exception(raw)\n",
+        "req.py": "from flask import request\ndef h():\n    r = Request(\n        request.get_json()\n    )\n    return r\n",
+    }
+    for name, src in srcs.items():
+        f = tmp_path / name
+        f.write_text(src)
+    findings = ValidationScanner().scan(tmp_path)
+    by_file = {f.file: f for f in findings}
+    for name in srcs:
+        assert name in by_file, f"{name}: non-model CapWords wrongly suppressed the finding"
+
+
+def test_validation_model_named_capwords_suppresses(tmp_path):
+    # Model-named CapWords constructors (Create/Filter/Schema suffixes) DO count.
+    f = tmp_path / "app.py"
+    f.write_text(
+        "from flask import request\n"
+        "def h():\n"
+        "    raw = request.get_json()\n"
+        "    body = OrderCreate(**raw)\n"
+        "    return body\n"
+    )
+    assert ValidationScanner().scan(tmp_path) == []
+
+
 def test_validation_manual_guard_clause_still_fires(tmp_path):
     # Manual guard-clause validation (isinstance + early return) is NOT recognised
     # as a validation boundary — stays a finding for human review (decision A).

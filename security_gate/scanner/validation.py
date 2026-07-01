@@ -35,6 +35,18 @@ _VALIDATOR_METHODS = frozenset({
     "model_validate", "model_validate_json", "parse_obj", "parse_raw", "from_orm",
 })
 
+# A CapWords constructor is treated as a validation boundary only when its name
+# follows the model/schema naming convention. This is deliberately narrow: "any
+# CapWords call" would let non-validating constructors (Dict, Request, Response,
+# Exception, Logger, Path, ...) suppress real findings. Names outside this set err
+# toward a finding (the safe direction for a gate) and can be accepted via
+# accepted-findings.toml if they genuinely validate.
+_MODEL_SUFFIXES = (
+    "Model", "Schema", "Create", "Update", "Filter", "Params",
+    "Payload", "Body", "Input", "Form", "Config", "Settings", "Query", "DTO",
+)
+_MODEL_NAME_RE = r"[A-Z]\w*(?:" + "|".join(_MODEL_SUFFIXES) + r")"
+
 # Same-line validation usage — instantiation, validator method, or schema library.
 # Used only to suppress a finding whose entry point shares a line with the validation
 # call (e.g. `validate(request.json())`).
@@ -161,8 +173,8 @@ class ValidationScanner(BaseScanner):
             # Model.model_validate(var) / parse_obj(var) / validate(var)
             r"(?:model_validate|model_validate_json|parse_obj|parse_raw|from_orm|validate\w*)"
             r"\s*\(\s*(?:\*\*\s*)?" + v + r"\b"
-            # Model(var) / Model(**var) — user-defined model constructor
-            r"|(?<![\w.])[A-Z]\w*\s*\(\s*(?:\*\*\s*)?" + v + r"\b"
+            # ModelCreate(var) / ModelCreate(**var) — model-named constructor only
+            r"|(?<![\w.])" + _MODEL_NAME_RE + r"\s*\(\s*(?:\*\*\s*)?" + v + r"\b"
         )
 
     def _paren_context(self, lines: list[str]) -> tuple[list[bool], list[int]]:
@@ -202,5 +214,6 @@ class ValidationScanner(BaseScanner):
         last = name.split(".")[-1]
         if last in _VALIDATOR_METHODS or last.startswith("validate"):
             return True
-        # CapWords identifier → user-defined model/schema constructor.
-        return bool(re.match(r"[A-Z]\w*$", last))
+        # Model-named CapWords constructor (TicketCreate, OrderSchema, ...) — NOT
+        # arbitrary CapWords, so Dict/Request/Response/Exception don't suppress.
+        return last[:1].isupper() and last.endswith(_MODEL_SUFFIXES)
