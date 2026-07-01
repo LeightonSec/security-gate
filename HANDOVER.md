@@ -6,6 +6,72 @@
 
 ---
 
+## Scanner Improvements Shipped 2026-06-30 (180 tests, 17 file-based scanners + 4 semgrep taint rules)
+
+Hardened `missing_validation` and added two scanners plus one taint rule. Verified
+against the full portfolio (every LeightonSec repo + ai-firewall) before shipping.
+
+### scanner/validation.py — `missing_validation` window hardened
+
+The 5-line forward window was variable-agnostic and only recognised a narrow set of
+validator idioms, producing false positives waived in almost every repo. Rewritten
+with three precise suppression mechanisms (a paren-tracking pass underpins #1):
+
+1. **Enclosing validator call** — the entry point is an argument inside an open
+   validator/model constructor call, however many lines it spans. Clears the
+   incident-tracker `TicketFilter(...)` multi-line kwargs case and pcap-analyser's
+   `_AbuseIPDBData.model_validate(response.json())` (validator opening on the line
+   above the source).
+2. **Variable flows into a validator** — `raw = request.get_json()` then
+   `TicketCreate(**raw)` / `Model.model_validate(raw)`. Bound to the assigned
+   variable, so validation of an *unrelated* value in the window no longer suppresses
+   the finding (closes a false-negative the old proximity heuristic had).
+3. **Same-line validator wrap** — `validate(...)` on the entry-point line.
+
+**Decision A (deliberate scope):** manual guard-clause validation (`if not data`,
+`isinstance(...)` + early return) is NOT auto-suppressed — a regex can't tell an
+adequate guard from a weak presence check, and auto-clearing it would create false
+negatives. Those stay findings for human review / accepted-findings.toml (ai-firewall,
+unified-dashboard, threat-classifier).
+
+Portfolio diff (old scanner vs new): incident-tracker −7, pcap-analyser −1, **zero new
+findings on any app code**. Their `missing_validation` accepted-findings entries are
+now obsolete and should be removed when each repo bumps the pin.
+
+### scanner/pickle_usage.py (new) — `pickle_usage`
+
+CRITICAL: `pickle.load`/`pickle.loads` with a non-literal argument (same literal guard
+as eval/exec) and `pickle.Unpickler(...)` — arbitrary code execution on deserialization
+of untrusted data. Known limit: bare `loads(` after `from pickle import loads` is not
+detected (indistinguishable from json/marshmallow at the regex level).
+
+### scanner/hardcoded_timeout.py (new) — `missing_timeout`
+
+MEDIUM (non-gating): `requests.<verb>(...)` and `urllib.request.urlopen(...)` without a
+`timeout=` — indefinite hang / availability risk. Argument list is read by tracking
+parens so a `timeout=` on a neighbouring call can't mask a bare one. **httpx is
+intentionally excluded** — it ships a 5s default timeout, so omitting it is not a hang.
+
+### rules/semgrep_rules.yml — `sgw-path-traversal-taint` (new)
+
+WARNING/MEDIUM (non-gating): request input flowing into `open`/`io.open`/`os.open`/
+`os.remove`/`os.unlink`/`send_file`, sanitized by `secure_filename`/`os.path.basename`.
+Placed in the semgrep (AST taint) layer rather than a regex gating scanner deliberately:
+a regex false positive on `open(var)` would block CI across every pinned repo until a
+re-pin; a non-gating MEDIUM surfaces the issue without that blast radius.
+
+### Verification
+
+- 180 unit tests pass (was 165; +15: 5 validation, 5 pickle, 5 timeout).
+- Source self-scan clean; CI self-scan (`scan . --exclude tests`) simulation = no
+  CRITICAL/HIGH.
+- `pickle_usage`/`missing_timeout` produce zero findings on portfolio app code (only
+  security-gate's own excluded `tests/`).
+- semgrep rules validate (4 rules); path-traversal rule fires on the tainted case and
+  is suppressed by `secure_filename`.
+
+---
+
 ## Scanner Improvements Shipped 2026-05-30 EOD (138/138 tests, 16 scanners total)
 
 ### Additional scanners (session 2)

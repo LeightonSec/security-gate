@@ -13,9 +13,11 @@ from security_gate.scanner.cmd_injection import CmdInjectionScanner
 from security_gate.scanner.crypto import CryptoScanner
 from security_gate.scanner.deps import DepsScanner
 from security_gate.scanner.git_history import GitHistoryScanner
+from security_gate.scanner.hardcoded_timeout import HardcodedTimeoutScanner
 from security_gate.scanner.llm_injection import LlmInjectionScanner
 from security_gate.scanner.outbound import OutboundScanner
 from security_gate.scanner.path_manip import PathManipScanner
+from security_gate.scanner.pickle_usage import PickleUsageScanner
 from security_gate.scanner.retention import RetentionScanner
 from security_gate.scanner.sca import ScaScanner
 from security_gate.scanner.secrets import SecretsScanner
@@ -153,6 +155,90 @@ def test_validation_gate_ignore_suppresses_finding(tmp_path):
 def test_validation_without_suppression_still_fires(tmp_path):
     f = tmp_path / "state.py"
     f.write_text('data = json.loads(p.read_text())\n')
+    findings = ValidationScanner().scan(tmp_path)
+    assert len(findings) == 1
+
+
+def test_validation_multiline_model_constructor_suppresses(tmp_path):
+    # Entry points are kwargs inside an open user-model constructor spanning lines.
+    f = tmp_path / "app.py"
+    f.write_text(
+        "from flask import request\n"
+        "from schemas import TicketFilter\n"
+        "def get_tickets():\n"
+        "    filters = TicketFilter(\n"
+        "        status=request.args.get('status'),\n"
+        "        priority=request.args.get('priority'),\n"
+        "        source=request.args.get('source'),\n"
+        "        department=request.args.get('department'),\n"
+        "    )\n"
+        "    return filters\n"
+    )
+    assert ValidationScanner().scan(tmp_path) == []
+
+
+def test_validation_var_flows_into_model_constructor_suppresses(tmp_path):
+    # raw = request.get_json() then TicketCreate(**raw) within the window.
+    f = tmp_path / "app.py"
+    f.write_text(
+        "from flask import request\n"
+        "from schemas import TicketCreate\n"
+        "def create():\n"
+        "    raw = request.get_json()\n"
+        "    try:\n"
+        "        body = TicketCreate(**raw)\n"
+        "    except ValidationError:\n"
+        "        return 400\n"
+        "    return body\n"
+    )
+    assert ValidationScanner().scan(tmp_path) == []
+
+
+def test_validation_validator_opening_above_entry_point_suppresses(tmp_path):
+    # model_validate( opens on the line above the response.json() argument.
+    f = tmp_path / "intel.py"
+    f.write_text(
+        "def fetch():\n"
+        "    data = _AbuseIPDBData.model_validate(\n"
+        "        response.json().get('data', {})\n"
+        "    )\n"
+        "    return data\n"
+    )
+    assert ValidationScanner().scan(tmp_path) == []
+
+
+def test_validation_unrelated_validation_in_window_still_fires(tmp_path):
+    # Validation of an UNRELATED value in the window must not suppress the finding
+    # for the bound variable that is never validated (false-negative guard).
+    f = tmp_path / "app.py"
+    f.write_text(
+        "from flask import request\n"
+        "def handler():\n"
+        "    raw = request.get_json()\n"
+        "    log(raw)\n"
+        "    other = Model.model_validate(something_else)\n"
+        "    db.execute(raw['q'])\n"
+    )
+    findings = ValidationScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].line == 3
+
+
+def test_validation_manual_guard_clause_still_fires(tmp_path):
+    # Manual guard-clause validation (isinstance + early return) is NOT recognised
+    # as a validation boundary — stays a finding for human review (decision A).
+    f = tmp_path / "app.py"
+    f.write_text(
+        "from flask import request\n"
+        "def analyse():\n"
+        "    data = request.get_json(silent=True)\n"
+        "    if not data or 'prompt' not in data:\n"
+        "        return _error(400)\n"
+        "    prompt = data['prompt']\n"
+        "    if not isinstance(prompt, str):\n"
+        "        return _error(400)\n"
+        "    return prompt\n"
+    )
     findings = ValidationScanner().scan(tmp_path)
     assert len(findings) == 1
 
@@ -1357,3 +1443,90 @@ def test_semgrep_fixture_missed_by_regex_scanner():
         "llm_injection regex scanner now catches multi-hop — "
         "semgrep scanner may be redundant for this pattern"
     )
+
+
+# --- pickle_usage ---
+
+def test_pickle_loads_variable_is_critical(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("import pickle\nobj = pickle.loads(payload)\n")
+    findings = PickleUsageScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity.value == "CRITICAL"
+
+
+def test_pickle_load_call_arg_is_critical(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("import pickle\nobj = pickle.load(open(path, 'rb'))\n")
+    findings = PickleUsageScanner().scan(tmp_path)
+    assert any(x.severity.value == "CRITICAL" for x in findings)
+
+
+def test_pickle_loads_literal_is_not_flagged(tmp_path):
+    # constant bytes literal is not attacker-controlled — literal guard excludes it
+    f = tmp_path / "m.py"
+    f.write_text("import pickle\nobj = pickle.loads(b'\\x80\\x04')\n")
+    assert PickleUsageScanner().scan(tmp_path) == []
+
+
+def test_pickle_unpickler_is_critical(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("import pickle\nu = pickle.Unpickler(stream)\n")
+    findings = PickleUsageScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity.value == "CRITICAL"
+
+
+def test_pickle_gate_ignore_suppresses(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("import pickle\nobj = pickle.loads(trusted)  # gate: ignore - local trusted cache\n")
+    assert PickleUsageScanner().scan(tmp_path) == []
+
+
+# --- missing_timeout ---
+
+def test_requests_without_timeout_is_medium(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("import requests\nr = requests.get(url)\n")
+    findings = HardcodedTimeoutScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].severity.value == "MEDIUM"
+
+
+def test_requests_with_timeout_is_clean(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("import requests\nr = requests.get(url, timeout=5)\n")
+    assert HardcodedTimeoutScanner().scan(tmp_path) == []
+
+
+def test_requests_with_multiline_timeout_is_clean(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text(
+        "import requests\n"
+        "r = requests.post(\n"
+        "    url,\n"
+        "    json=body,\n"
+        "    timeout=10,\n"
+        ")\n"
+    )
+    assert HardcodedTimeoutScanner().scan(tmp_path) == []
+
+
+def test_neighbouring_timeout_does_not_mask_bare_call(tmp_path):
+    # a timeout= on the next call must not suppress the bare call above it
+    f = tmp_path / "m.py"
+    f.write_text(
+        "import requests\n"
+        "a = requests.get(url1)\n"
+        "b = requests.get(url2, timeout=5)\n"
+    )
+    findings = HardcodedTimeoutScanner().scan(tmp_path)
+    assert len(findings) == 1
+    assert findings[0].line == 2
+
+
+def test_httpx_without_timeout_not_flagged(tmp_path):
+    # httpx ships a 5s default timeout — omitting it is not a hang risk
+    f = tmp_path / "m.py"
+    f.write_text("import httpx\nr = httpx.get(url)\n")
+    assert HardcodedTimeoutScanner().scan(tmp_path) == []
