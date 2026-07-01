@@ -81,3 +81,36 @@ rules:
       category: security
       cwe: "CWE-918: Server-Side Request Forgery"
       checklist: SSRF-2
+
+  - id: sgw-path-traversal-taint
+    mode: taint
+    languages: [python]
+    severity: WARNING
+    message: >
+      Request input flows into a filesystem path via reassignment chain — path
+      traversal risk ('../' can escape the intended directory). Resolve the path and
+      confirm it stays within an allowed base directory (e.g. Path.resolve() +
+      is_relative_to), or strip it with secure_filename, before opening.
+      Note: intra-function taint only — cross-function paths require semgrep Pro.
+    pattern-sources:
+      - pattern: request.get_json(...)
+      - pattern: request.form
+      - pattern: request.args
+      - pattern: request.json
+      - pattern: request.data
+    pattern-sinks:
+      - pattern: open(...)
+      - pattern: io.open(...)
+      - pattern: os.open(...)
+      - pattern: os.remove(...)
+      - pattern: os.unlink(...)
+      - pattern: send_file(...)
+      - pattern: flask.send_file(...)
+    pattern-sanitizers:
+      - pattern: secure_filename(...)
+      - pattern: werkzeug.utils.secure_filename(...)
+      - pattern: os.path.basename(...)
+    metadata:
+      category: security
+      cwe: "CWE-22: Path Traversal"
+      checklist: PATH-TRAV-1

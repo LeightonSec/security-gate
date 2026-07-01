@@ -40,6 +40,9 @@ _CHECKLIST_MAP = {
     "sgw-ssrf-taint": (
         "SSRF-2: Intra-function taint — request input reaches HTTP client URL via reassignment chain"
     ),
+    "sgw-path-traversal-taint": (
+        "PATH-TRAV-1: Intra-function taint — request input reaches a filesystem path via reassignment chain"
+    ),
 }
 
 

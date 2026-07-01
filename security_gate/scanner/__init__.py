@@ -5,9 +5,11 @@ from .cmd_injection import CmdInjectionScanner
 from .crypto import CryptoScanner
 from .deps import DepsScanner
 from .git_history import GitHistoryScanner
+from .hardcoded_timeout import HardcodedTimeoutScanner
 from .llm_injection import LlmInjectionScanner
 from .outbound import OutboundScanner
 from .path_manip import PathManipScanner
+from .pickle_usage import PickleUsageScanner
 from .retention import RetentionScanner
 from .sca import ScaScanner
 from .secrets import SecretsScanner
@@ -36,6 +38,8 @@ ALL_SCANNERS = [
     GitHistoryScanner,
     BareSuppressScanner,
     CmdInjectionScanner,
+    PickleUsageScanner,
+    HardcodedTimeoutScanner,
     SstiScanner,
     SsrfScanner,
     SemgrepScanner,

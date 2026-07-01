@@ -114,7 +114,9 @@ security-gate scan /path/to/repo --output json --save
 | `sca` | Known CVEs in pinned PyPI deps — single OSV.dev batch query, deduplicates GHSA/PYSEC by CVE alias, surfaces fix version; covers requirements.txt and pyproject.toml | CRITICAL/HIGH/MEDIUM/LOW |
 | `hardcoded_secrets` | Insecure `getenv()` fallbacks, inline key assignments | CRITICAL/HIGH |
 | `retention_policy` | DB writes and file appends without TTL/purge logic | MEDIUM |
-| `missing_validation` | Flask input without Pydantic validation | HIGH |
+| `missing_validation` | Attacker-controlled input reaching logic without a schema contract (recognises Pydantic models/validators in or around the call; manual guard clauses are not auto-cleared) | HIGH/CRITICAL |
+| `pickle_usage` | `pickle.load`/`loads` on non-literal input, `pickle.Unpickler` — RCE on untrusted deserialization | CRITICAL |
+| `missing_timeout` | `requests`/`urllib` outbound calls without a `timeout=` (hang/DoS risk) | MEDIUM |
 | `ai_ml` | `from_pretrained()` without `revision=`, `trust_remote_code=True`, permissive HF telemetry | CRITICAL/HIGH/MEDIUM |
 | `web_app` | Debug mode, SQL injection, CORS wildcard, unauthenticated routes | CRITICAL/HIGH/MEDIUM |
 | `security_tool` | Path traversal and injection payload strings in test fixtures | MEDIUM |
