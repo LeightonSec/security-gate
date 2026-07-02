@@ -143,8 +143,13 @@ diff_findings() {
 # ----------------------------------------------------------------------------- preflight
 command -v gh  >/dev/null || die "gh not found"
 command -v git >/dev/null || die "git not found"
-[[ "$(git -C "$CANON/LeightonSec/security-gate" rev-parse HEAD)" == "$NEW_SHA" ]] \
-  || die "local security-gate HEAD != NEW_SHA — refusing to run against a stale gate"
+# The gate is scanned only from venvs (pip install git@SHA, remote); the local
+# security-gate checkout feeds no scan — this is an operator-hygiene sanity check
+# that the new gate is in local history. Use ancestor, not exact HEAD ==, so it
+# still passes when the repo has commits ON TOP of NEW_SHA (e.g. this tooling, or
+# any later release) — the normal state of an advancing repo.
+git -C "$CANON/LeightonSec/security-gate" merge-base --is-ancestor "$NEW_SHA" HEAD 2>/dev/null \
+  || die "local security-gate history does not contain NEW_SHA ($NEW_SHA) — fetch/checkout the new gate first"
 
 build_venv "$VENV_OLD" "$OLD_SHA"
 build_venv "$VENV_NEW" "$NEW_SHA"
