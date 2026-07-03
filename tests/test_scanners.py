@@ -955,17 +955,19 @@ def test_git_history_clean_on_empty_output(tmp_path):
     assert secret_findings == []
 
 
-def test_git_history_timeout_emits_medium_finding(tmp_path):
+def test_git_history_timeout_emits_high_finding(tmp_path):
+    # HIGH, not MEDIUM: an unscannable history removes coverage from a gating
+    # check and must fail closed (fail-open audit, 2026-07-03).
     import subprocess
     git_dir = tmp_path / ".git"
     git_dir.mkdir()
     with patch("security_gate.scanner.git_history.subprocess.run",
                side_effect=subprocess.TimeoutExpired(cmd="git", timeout=30)):
         findings = GitHistoryScanner().scan(tmp_path)
-    medium = [f for f in findings if f.severity == Severity.MEDIUM]
-    assert len(medium) == 1
-    assert "timed out" in medium[0].detail
-    assert "incomplete" in medium[0].detail
+    high = [f for f in findings if f.severity == Severity.HIGH]
+    assert len(high) == 1
+    assert "timed out" in high[0].match
+    assert "could not complete" in high[0].detail
 
 
 # --- WebAppScanner rate limiting (WEB-5) ---
@@ -1444,20 +1446,27 @@ def test_semgrep_clean_on_empty_results(tmp_path):
     assert findings == []
 
 
-def test_semgrep_timeout_emits_info_finding(tmp_path):
+def test_semgrep_timeout_emits_medium_finding(tmp_path):
+    # MEDIUM, not INFO: tool present but failed (INFO is reserved for the
+    # expected not-installed case). Non-gating either way.
     with patch("security_gate.scanner.semgrep_scanner.subprocess.run",
                side_effect=subprocess.TimeoutExpired(cmd="semgrep", timeout=120)):
         findings = SemgrepScanner().scan(tmp_path)
     assert len(findings) == 1
-    assert findings[0].severity == Severity.INFO
+    assert findings[0].severity == Severity.MEDIUM
     assert "timed out" in findings[0].detail
 
 
-def test_semgrep_error_exit_returns_empty(tmp_path):
-    mock = MagicMock(returncode=2, stdout="")
+def test_semgrep_error_exit_emits_medium_finding(tmp_path):
+    # rc=2 used to return [] — indistinguishable from a clean scan. It must
+    # be a visible degradation finding (fail-open audit, 2026-07-03).
+    mock = MagicMock(returncode=2, stdout="", stderr="fatal: bad rules file")
     with patch("security_gate.scanner.semgrep_scanner.subprocess.run", return_value=mock):
         findings = SemgrepScanner().scan(tmp_path)
-    assert findings == []
+    assert len(findings) == 1
+    assert findings[0].severity == Severity.MEDIUM
+    assert "exited 2" in findings[0].match
+    assert "bad rules file" in findings[0].detail
 
 
 def test_semgrep_rules_file_exists():

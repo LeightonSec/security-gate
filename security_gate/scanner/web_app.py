@@ -63,11 +63,10 @@ class WebAppScanner(BaseScanner):
     def scan(self, root: Path) -> list[Finding]:
         findings = []
         for py_file in self._py_files(root):
-            try:
-                text = py_file.read_text(encoding="utf-8", errors="replace")
-                lines = text.splitlines()
-            except OSError:
+            text = self._read_text(py_file)
+            if text is None:
                 continue
+            lines = text.splitlines()
 
             has_flask_route = bool(_FLASK_ROUTE.search(text))
             has_llm_sink = bool(_LLM_SINK_RATE.search(text))

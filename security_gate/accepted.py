@@ -36,21 +36,43 @@ class AcceptedEntry:
     date: str
 
 
-def load_accepted(repo_root: Path) -> list[AcceptedEntry]:
+def load_accepted(repo_root: Path) -> tuple[list[AcceptedEntry], list[str]]:
+    """Load waivers. Returns (entries, warnings).
+
+    Every failure here is fail-closed (waivers drop, findings stay active) but
+    must be LOUD: a silently-ignored waiver file means the gate goes red with
+    no explanation of why previously-accepted findings came back.
+    """
+    warnings: list[str] = []
     path = repo_root / "accepted-findings.toml"
-    if not path.exists() or tomllib is None:
-        return []
+    if not path.exists():
+        return [], warnings
+    if tomllib is None:
+        warnings.append(
+            "accepted-findings.toml present but tomli is not installed "
+            "(Python < 3.11) — ALL waivers ignored; every finding evaluates as active."
+        )
+        return [], warnings
     try:
         data = tomllib.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return []
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        warnings.append(
+            f"accepted-findings.toml could not be read or parsed ({exc}) — "
+            "ALL waivers ignored; every finding evaluates as active."
+        )
+        return [], warnings
     entries = []
-    for item in data.get("accepted", []):
+    for idx, item in enumerate(data.get("accepted", []), start=1):
         scanner = item.get("scanner", "").strip()
         file_ = item.get("file", "").strip()
         match = item.get("match", "").strip()
         if not (scanner and file_ and match):
-            continue  # skip incomplete entries — empty strings would match everything
+            # empty strings would match everything — reject, but say so
+            warnings.append(
+                f"accepted-findings.toml entry {idx} incomplete "
+                "(scanner, file and match are all required) — entry ignored."
+            )
+            continue
         entries.append(AcceptedEntry(
             scanner=scanner,
             file=file_,
@@ -59,7 +81,7 @@ def load_accepted(repo_root: Path) -> list[AcceptedEntry]:
             reviewer=item.get("reviewer", ""),
             date=str(item.get("date", "")),
         ))
-    return entries
+    return entries, warnings
 
 
 def _matches(finding, entry: AcceptedEntry) -> bool:

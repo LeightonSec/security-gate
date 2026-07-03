@@ -35,9 +35,8 @@ class DepsScanner(BaseScanner):
         for req_file in req_files:
             rel = self._rel(root, req_file)
             any_hashes = False
-            try:
-                text = req_file.read_text(encoding="utf-8", errors="replace")
-            except OSError:
+            text = self._read_text(req_file)
+            if text is None:
                 continue
 
             lines = text.splitlines()
@@ -74,17 +73,25 @@ class DepsScanner(BaseScanner):
         return findings
 
     def _scan_pyproject(self, root: Path, has_req_files: bool) -> list[Finding]:
-        if tomllib is None:
-            return []
-
         pyproject = root / "pyproject.toml"
         if not pyproject.exists():
             return []
 
+        # tomli is a declared dependency on <3.11 — missing means a broken
+        # install; skipping would silently drop gating dep coverage.
+        if tomllib is None:
+            self.integrity_errors.append(
+                (pyproject, "tomli not installed (Python < 3.11) — pyproject.toml not scanned")
+            )
+            return []
+
+        text = self._read_text(pyproject)
+        if text is None:
+            return []
         try:
-            text = pyproject.read_text(encoding="utf-8")
             data = tomllib.loads(text)
-        except Exception:
+        except tomllib.TOMLDecodeError as exc:
+            self.integrity_errors.append((pyproject, f"pyproject.toml parse error: {exc}"))
             return []
 
         project = data.get("project", {})
@@ -150,9 +157,9 @@ class DepsScanner(BaseScanner):
         for rf in root.rglob("requirements*.txt"):
             if any(part in self._excludes for part in rf.parts):
                 continue
-            try:
-                if any(_HASHED.search(line) for line in rf.read_text(encoding="utf-8", errors="replace").splitlines()):
-                    return True
-            except OSError:
-                pass
+            lines = self._read_lines(rf)
+            if lines is None:
+                continue  # unreadable → skip this file, error already recorded via _read_lines
+            if any(_HASHED.search(line) for line in lines):
+                return True
         return any((root / lf).exists() for lf in _LOCKFILES)

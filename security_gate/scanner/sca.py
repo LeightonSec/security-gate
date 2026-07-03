@@ -38,10 +38,10 @@ def _parse_req_file(text: str) -> list[tuple[str, str]]:
 
 
 def _parse_pyproject(text: str) -> list[tuple[str, str]]:
-    try:
-        data = tomllib.loads(text)
-    except Exception:
-        return []
+    """Raises tomllib.TOMLDecodeError on malformed TOML — the caller records it
+    as an integrity error; swallowing it here would silently skip CVE queries
+    for every dependency in the file."""
+    data = tomllib.loads(text)
     project = data.get("project", {})
     raw_deps: list[str] = list(project.get("dependencies", []))
     for group in project.get("optional-dependencies", {}).values():
@@ -105,18 +105,21 @@ class ScaScanner(BaseScanner):
     def _collect_pinned(self, root: Path) -> list[tuple[str, str, str]]:
         deps: list[tuple[str, str, str]] = []
         for req_file in root.rglob("requirements*.txt"):
-            try:
-                text = req_file.read_text(encoding="utf-8", errors="replace")
-            except OSError:
+            text = self._read_text(req_file)
+            if text is None:
                 continue
             for name, version in _parse_req_file(text):
                 deps.append((name, version, self._rel(root, req_file)))
         for pyproject in root.rglob("pyproject.toml"):
-            try:
-                text = pyproject.read_text(encoding="utf-8", errors="replace")
-            except OSError:
+            text = self._read_text(pyproject)
+            if text is None:
                 continue
-            for name, version in _parse_pyproject(text):
+            try:
+                parsed = _parse_pyproject(text)
+            except tomllib.TOMLDecodeError as exc:
+                self.integrity_errors.append((pyproject, f"pyproject.toml parse error: {exc}"))
+                continue
+            for name, version in parsed:
                 deps.append((name, version, self._rel(root, pyproject)))
         return deps
 

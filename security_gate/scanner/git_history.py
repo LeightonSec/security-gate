@@ -53,22 +53,25 @@ class GitHistoryScanner(BaseScanner):
             [(p, label, Severity.HIGH) for p, label in _HIGH_PATTERNS]
         )
         for pattern, label, severity in all_patterns:
-            commits = self._grep_history(root, pattern, timeout)
-            if commits is None:
+            commits, error = self._grep_history(root, pattern, timeout)
+            if error is not None:
+                # HIGH, not MEDIUM: this check feeds gating CRITICAL/HIGH
+                # findings, and git is local infrastructure — a history that
+                # cannot be scanned must fail closed, not pass silently.
                 findings.append(Finding(
                     scanner=self.name,
-                    severity=Severity.MEDIUM,
+                    severity=Severity.HIGH,
                     file="git history",
                     line=1,
-                    match=f"timed out after {timeout}s",
+                    match=error[:120],
                     detail=(
-                        f"git history scan timed out after {timeout}s — scan incomplete, "
+                        f"git history scan could not complete ({error}) — "
                         "secrets in history cannot be confirmed absent. "
-                        "Increase GIT_SCAN_TIMEOUT or run 'git fetch --unshallow' on shallow clones."
+                        "Fix the environment or accept explicitly via accepted-findings.toml."
                     ),
                     checklist_item="GIT-HIST-1: No secrets in git history (purge with git-filter-repo)",
                 ))
-                return findings  # subsequent patterns will also time out
+                return findings  # same infrastructure failure would repeat for every pattern
             if commits:
                 detail = (
                     f"{label} pattern found in {len(commits)} commit diff(s) — "
@@ -108,8 +111,15 @@ class GitHistoryScanner(BaseScanner):
             checklist_item="GIT-HIST-1: No secrets in git history (purge with git-filter-repo)",
         )
 
-    def _grep_history(self, root: Path, pattern: str, timeout: int) -> list[str] | None:
-        """Returns None on timeout, [] on no matches, [commit hashes] on matches."""
+    def _grep_history(self, root: Path, pattern: str, timeout: int) -> tuple[list[str], str | None]:
+        """Returns (commit hashes, error). error is set when the scan could not
+        run at all; an empty commit list with no error is a genuine no-matches
+        result. The two must stay distinguishable — collapsing an error into []
+        reports an unscannable history as clean.
+
+        Exit codes verified against real repos: git log exits 0 for both match
+        and no-match (empty stdout signals no matches); 128 for real failures
+        (bad regex, not a repo). The (0, 1) allowance is inherited slack."""
         try:
             result = subprocess.run(
                 [
@@ -121,10 +131,14 @@ class GitHistoryScanner(BaseScanner):
                 text=True,
                 timeout=timeout,
             )
-            if result.returncode not in (0, 1):
-                return []
-            return [c.strip() for c in result.stdout.splitlines() if c.strip()]
         except subprocess.TimeoutExpired:
-            return None
+            return [], (
+                f"timed out after {timeout}s — increase GIT_SCAN_TIMEOUT or run "
+                "'git fetch --unshallow' on shallow clones"
+            )
         except FileNotFoundError:
-            return []
+            return [], "git executable not found on PATH"
+        if result.returncode not in (0, 1):
+            stderr_first = (result.stderr.strip().splitlines() or [""])[0]
+            return [], f"git log exited {result.returncode}: {stderr_first[:120]}"
+        return [c.strip() for c in result.stdout.splitlines() if c.strip()], None

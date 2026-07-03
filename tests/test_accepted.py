@@ -41,13 +41,13 @@ def _other_finding() -> Finding:
 # --- load_accepted ---
 
 def test_load_accepted_returns_empty_without_file(tmp_path):
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     assert entries == []
 
 
 def test_load_accepted_parses_entry(tmp_path):
     (tmp_path / "accepted-findings.toml").write_text(_TOML)
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     assert len(entries) == 1
     assert entries[0].scanner == "git_history"
     assert entries[0].file == "git history"
@@ -61,7 +61,7 @@ def test_load_accepted_skips_entry_with_empty_scanner(tmp_path):
         '[[accepted]]\nscanner = ""\nfile = "git history"\nmatch = "abc123"\n'
         'rationale = "test"\nreviewer = "x"\ndate = "2026-05-30"\n'
     )
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     assert entries == []
 
 
@@ -70,7 +70,7 @@ def test_load_accepted_skips_entry_with_empty_match(tmp_path):
         '[[accepted]]\nscanner = "git_history"\nfile = "git history"\nmatch = ""\n'
         'rationale = "test"\nreviewer = "x"\ndate = "2026-05-30"\n'
     )
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     assert entries == []
 
 
@@ -79,13 +79,13 @@ def test_load_accepted_skips_entry_with_empty_file(tmp_path):
         '[[accepted]]\nscanner = "git_history"\nfile = ""\nmatch = "abc123"\n'
         'rationale = "test"\nreviewer = "x"\ndate = "2026-05-30"\n'
     )
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     assert entries == []
 
 
 def test_load_accepted_returns_empty_on_malformed_toml(tmp_path):
     (tmp_path / "accepted-findings.toml").write_text("not valid toml [[[\n")
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     assert entries == []
 
 
@@ -95,7 +95,7 @@ def test_load_accepted_multiple_entries(tmp_path):
         'match = "changeme"\nrationale = "test"\nreviewer = "x"\ndate = "2026-05-30"\n'
     )
     (tmp_path / "accepted-findings.toml").write_text(toml)
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     assert len(entries) == 2
 
 
@@ -110,7 +110,7 @@ def test_partition_empty_accepted_returns_all_active():
 
 def test_partition_matching_finding_is_suppressed(tmp_path):
     (tmp_path / "accepted-findings.toml").write_text(_TOML)
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     findings = [_git_finding()]
     active, suppressed = partition_findings(findings, entries)
     assert active == []
@@ -121,7 +121,7 @@ def test_partition_matching_finding_is_suppressed(tmp_path):
 
 def test_partition_non_matching_finding_stays_active(tmp_path):
     (tmp_path / "accepted-findings.toml").write_text(_TOML)
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     findings = [_other_finding()]
     active, suppressed = partition_findings(findings, entries)
     assert len(active) == 1
@@ -130,7 +130,7 @@ def test_partition_non_matching_finding_stays_active(tmp_path):
 
 def test_partition_mixed_findings_split_correctly(tmp_path):
     (tmp_path / "accepted-findings.toml").write_text(_TOML)
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     findings = [_git_finding(), _other_finding()]
     active, suppressed = partition_findings(findings, entries)
     assert len(active) == 1
@@ -141,7 +141,7 @@ def test_partition_mixed_findings_split_correctly(tmp_path):
 def test_partition_substring_match_on_short_hash(tmp_path):
     # Accepted entry uses 8-char prefix; finding has full 40-char hash
     (tmp_path / "accepted-findings.toml").write_text(_TOML)
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     full_hash = "4562cfee04021f2a8210860bd2d2e49c159ff8de"
     findings = [_git_finding(match=full_hash)]
     active, suppressed = partition_findings(findings, entries)
@@ -151,7 +151,7 @@ def test_partition_substring_match_on_short_hash(tmp_path):
 
 def test_partition_non_matching_hash_not_suppressed(tmp_path):
     (tmp_path / "accepted-findings.toml").write_text(_TOML)
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     findings = [_git_finding(match="deadbeef99999999deadbeefdeadbeefdeadbeef")]
     active, suppressed = partition_findings(findings, entries)
     assert len(active) == 1
@@ -162,7 +162,7 @@ def test_partition_non_matching_hash_not_suppressed(tmp_path):
 
 def test_gate_passes_when_only_accepted_findings_remain(tmp_path):
     (tmp_path / "accepted-findings.toml").write_text(_TOML)
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     all_findings = [_git_finding()]
     active, _ = partition_findings(all_findings, entries)
     assert gate_passed(active) is True
@@ -170,7 +170,7 @@ def test_gate_passes_when_only_accepted_findings_remain(tmp_path):
 
 def test_gate_blocked_when_non_accepted_high_remains(tmp_path):
     (tmp_path / "accepted-findings.toml").write_text(_TOML)
-    entries = load_accepted(tmp_path)
+    entries, _ = load_accepted(tmp_path)
     all_findings = [_git_finding(), _other_finding()]
     active, _ = partition_findings(all_findings, entries)
     assert gate_passed(active) is False

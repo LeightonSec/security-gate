@@ -47,9 +47,8 @@ class LlmInjectionScanner(BaseScanner):
     def scan(self, root: Path) -> list[Finding]:
         findings = []
         for py_file in self._py_files(root):
-            try:
-                text = py_file.read_text(encoding="utf-8", errors="replace")
-            except OSError:
+            text = self._read_text(py_file)
+            if text is None:
                 continue
             if not _REQUEST_SRC.search(text) or not _LLM_SINK.search(text):
                 continue

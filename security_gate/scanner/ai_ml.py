@@ -19,9 +19,8 @@ class AiMlScanner(BaseScanner):
     def scan(self, root: Path) -> list[Finding]:
         findings = []
         for py_file in self._py_files(root):
-            try:
-                lines = py_file.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
+            lines = self._read_lines(py_file)
+            if lines is None:
                 continue
 
             for i, line in enumerate(lines):

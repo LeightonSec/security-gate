@@ -11,7 +11,7 @@ from security_gate.accepted import load_accepted, partition_findings
 from security_gate.report.generator import gate_passed, generate_json, generate_markdown
 from security_gate.sbom import generate_sbom_json
 from security_gate.scanner import ALL_SCANNERS
-from security_gate.scanner.base import Severity
+from security_gate.scanner.base import _SEVERITY_ORDER, Finding, Severity
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 console = Console()
@@ -55,12 +55,47 @@ def scan(
 
     extra_excludes = frozenset(exclude)
     all_findings = []
+    # rel path → (error, severity); one entry per file, most severe wins
+    integrity_errors: dict[str, tuple[str, Severity]] = {}
     for scanner_cls in ALL_SCANNERS:
         scanner = scanner_cls(excludes=extra_excludes)
         findings = scanner.scan(path)
         all_findings.extend(findings)
+        for err_path, err in scanner.integrity_errors:
+            try:
+                rel = str(err_path.relative_to(path))
+            except ValueError:
+                rel = str(err_path)
+            sev = scanner.integrity_severity
+            prev = integrity_errors.get(rel)
+            if prev is None or _SEVERITY_ORDER[sev] < _SEVERITY_ORDER[prev[1]]:
+                integrity_errors[rel] = (err, sev)
         status = f"[red]{len(findings)} findings[/red]" if findings else "[green]clean[/green]"
         console.print(f"  {scanner.name:<22} {status}")
+
+    # A file the gate could not read or parse is unverified code — fail closed.
+    # One finding per file (most scanners will have hit the same file); waivable
+    # via accepted-findings.toml for deliberate cases (e.g. non-UTF-8 fixtures).
+    for rel in sorted(integrity_errors):
+        err, sev = integrity_errors[rel]
+        all_findings.append(Finding(
+            scanner="scan_integrity",
+            severity=sev,
+            file=rel,
+            line=1,
+            match=err[:120],
+            detail=(
+                f"File was discovered but could not be read or parsed ({err}) — "
+                "no scanner inspected its contents, so a passing gate would be "
+                "claiming coverage it does not have. Fix the file or accept it "
+                "explicitly via accepted-findings.toml."
+            ),
+            checklist_item="INTEGRITY-1: every discovered file was readable and fully scanned",
+        ))
+    if integrity_errors:
+        console.print(
+            f"  {'scan_integrity':<22} [red]{len(integrity_errors)} unreadable/unparseable file(s)[/red]"
+        )
 
     if url:
         from security_gate.dast import DastScanner
@@ -76,7 +111,11 @@ def scan(
     console.print()
 
     # Partition accepted findings — only active findings affect the gate
-    accepted_entries = load_accepted(path)
+    accepted_entries, waiver_warnings = load_accepted(path)
+    for warning in waiver_warnings:
+        console.print(f"[yellow]Warning:[/yellow] {warning}")
+    if waiver_warnings:
+        console.print()
     active_findings, suppressed = partition_findings(all_findings, accepted_entries)
 
     passed = gate_passed(active_findings)

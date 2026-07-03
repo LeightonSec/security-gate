@@ -30,9 +30,8 @@ class SecurityToolScanner(BaseScanner):
         for py_file in self._py_files(root):
             if not any(part in _TEST_PATH_PARTS for part in py_file.parts):
                 continue
-            try:
-                lines = py_file.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
+            lines = self._read_lines(py_file)
+            if lines is None:
                 continue
 
             for i, line in enumerate(lines):

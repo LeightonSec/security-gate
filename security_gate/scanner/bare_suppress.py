@@ -26,9 +26,8 @@ class BareSuppressScanner(BaseScanner):
     def scan(self, root: Path) -> list[Finding]:
         findings = []
         for f in self._py_files(root) + self._ts_files(root):
-            try:
-                lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
+            lines = self._read_lines(f)
+            if lines is None:
                 continue
             for i, line in enumerate(lines):
                 if _BARE_SUPPRESS.search(line):

@@ -57,12 +57,37 @@ _DEFAULT_EXCLUDE_DIRS: frozenset[str] = frozenset({
 
 class BaseScanner:
     name: str = "base"
+    # Severity the CLI assigns to this scanner's integrity_errors. HIGH because
+    # an unread file removes coverage from gating checks; a scanner whose OWN
+    # findings never gate (e.g. the semgrep layer) must override this rather
+    # than inherit a gating severity for a non-gating coverage loss.
+    integrity_severity: Severity = Severity.HIGH
 
     def __init__(self, excludes: frozenset[str] = frozenset()) -> None:
         self._excludes = _DEFAULT_EXCLUDE_DIRS | excludes
+        # (path, error) for every file this scanner discovered but could not
+        # read or parse. A skipped file is unverified code — the CLI turns
+        # these into gating scan_integrity findings; skipping silently would
+        # let the gate pass on files it never inspected. Tool failures (git
+        # missing, semgrep crash, DAST probe errors) do NOT belong here — they
+        # emit their own Findings with scanner-specific severity and wording.
+        self.integrity_errors: list[tuple[Path, str]] = []
 
     def scan(self, root: Path) -> list[Finding]:
         raise NotImplementedError
+
+    def _read_text(self, path: Path) -> str | None:
+        # Strict decode: errors="replace" would silently scan garbage in place
+        # of undecodable bytes. UnicodeDecodeError is a ValueError, not OSError.
+        try:
+            return path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            self.integrity_errors.append((path, str(exc)))
+            return None
+
+    def _read_lines(self, path: Path) -> list[str] | None:
+        text = self._read_text(path)
+        return None if text is None else text.splitlines()
 
     def _py_files(self, root: Path) -> list[Path]:
         return [

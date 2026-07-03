@@ -47,9 +47,8 @@ class CryptoScanner(BaseScanner):
     def scan(self, root: Path) -> list[Finding]:
         findings = []
         for ts_file in self._ts_files(root):
-            try:
-                lines = ts_file.read_text(encoding="utf-8", errors="replace").splitlines()
-            except OSError:
+            lines = self._read_lines(ts_file)
+            if lines is None:
                 continue
 
             for i, line in enumerate(lines):

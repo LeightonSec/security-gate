@@ -151,12 +151,18 @@ class DastScanner:
         dast_mode_present = False
         detection_count = 0
         responses_checked = 0
+        failed_probes: list[str] = []
 
         for payload in threat_payloads:
             try:
                 resp = client.post("/chat", json={"prompt": payload["text"]},
                                    timeout=15.0)
-            except httpx.RequestError:
+            except httpx.RequestError as exc:
+                # A dropped probe is unmeasured coverage for DAST-3/4/5 —
+                # collected and reported after the loop, never silently skipped.
+                failed_probes.append(
+                    f"{payload.get('variant', 'unknown')}: {exc.__class__.__name__}"
+                )
                 continue
             responses_checked += 1
             body = resp.text
@@ -203,6 +209,28 @@ class DastScanner:
                         checklist_item=_CHECKLIST["DAST-5"],
                     ))
                     break
+
+        # Probe execution failures — one HIGH against DAST-4 (its >95%-rate
+        # claim is arithmetically falsified by a dropped probe); DAST-3/5
+        # coverage loss is stated in detail rather than emitted as separate
+        # findings — one root cause, one finding, same as git_history and
+        # scan_integrity.
+        if failed_probes:
+            findings.append(DastFinding(
+                scanner=self.name, severity=Severity.HIGH,
+                endpoint="/chat", payload_variant="probe_failures",
+                status_code=None,
+                response_snippet=f"{len(failed_probes)}/{len(threat_payloads)} probes failed",
+                detail=(
+                    f"{len(failed_probes)} of {len(threat_payloads)} threat probes "
+                    f"failed to execute ({', '.join(failed_probes[:3])}"
+                    f"{', …' if len(failed_probes) > 3 else ''}) — stack-trace (DAST-3), "
+                    "leakage (DAST-5) and detection-rate (DAST-4) checks ran on "
+                    "incomplete coverage; a passing result cannot be trusted until "
+                    "probes execute cleanly."
+                ),
+                checklist_item=_CHECKLIST["DAST-4"],
+            ))
 
         # DAST-4: pipeline presence / detection rate — emitted once after full pass
         if not dast_mode_present:

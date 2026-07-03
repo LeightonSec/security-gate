@@ -49,6 +49,21 @@ _CHECKLIST_MAP = {
 class SemgrepScanner(BaseScanner):
     name = "semgrep"
 
+    def _degraded(self, severity: Severity, match: str, detail: str) -> Finding:
+        """Visible marker that this layer did not run or complete — never a
+        silent []. INFO = expected absence (not installed); MEDIUM = tool
+        present but failed (crash, timeout, unusable output). Never gating:
+        this layer's own findings are MEDIUM-max by design."""
+        return Finding(
+            scanner=self.name,
+            severity=severity,
+            file="semgrep",
+            line=1,
+            match=match,
+            detail=detail,
+            checklist_item="SEMGREP-0: semgrep installed for AST-based taint analysis",
+        )
+
     def scan(self, root: Path) -> list[Finding]:
         try:
             result = subprocess.run(
@@ -62,40 +77,46 @@ class SemgrepScanner(BaseScanner):
                 timeout=120,
             )
         except FileNotFoundError:
-            return [Finding(
-                scanner=self.name,
-                severity=Severity.INFO,
-                file="semgrep",
-                line=1,
-                match="semgrep not found",
-                detail=(
-                    "semgrep not installed — AST-based intra-procedural taint analysis skipped. "
-                    "Install with: pip install semgrep"
-                ),
-                checklist_item="SEMGREP-0: semgrep installed for AST-based taint analysis",
+            return [self._degraded(
+                Severity.INFO,
+                "semgrep not found",
+                "semgrep not installed — AST-based intra-procedural taint analysis skipped. "
+                "Install with: pip install semgrep",
             )]
         except subprocess.TimeoutExpired:
-            return [Finding(
-                scanner=self.name,
-                severity=Severity.INFO,
-                file="semgrep",
-                line=1,
-                match="timed out after 120s",
-                detail=(
-                    "semgrep scan timed out after 120s — AST-based intra-procedural taint "
-                    "analysis incomplete. Run semgrep manually or increase timeout."
-                ),
-                checklist_item="SEMGREP-0: semgrep installed for AST-based taint analysis",
+            return [self._degraded(
+                Severity.MEDIUM,
+                "timed out after 120s",
+                "semgrep scan timed out after 120s — AST-based intra-procedural taint "
+                "analysis incomplete. Run semgrep manually or increase timeout.",
             )]
 
         # Exit 0 = success no findings, exit 1 = success with findings, exit 2+ = error
-        if result.returncode > 1 or not result.stdout.strip():
-            return []
+        if result.returncode > 1:
+            stderr_first = (result.stderr.strip().splitlines() or [""])[0]
+            return [self._degraded(
+                Severity.MEDIUM,
+                f"semgrep exited {result.returncode}",
+                f"semgrep failed ({stderr_first[:120]}) — AST-based intra-procedural "
+                "taint analysis did not run; its results are missing from this report.",
+            )]
+        if not result.stdout.strip():
+            return [self._degraded(
+                Severity.MEDIUM,
+                "semgrep produced no output",
+                "semgrep exited successfully but produced no JSON — AST-based taint "
+                "analysis results are missing from this report.",
+            )]
 
         try:
             data = json.loads(result.stdout)  # gate: ignore — parses semgrep subprocess output, controlled invocation
         except json.JSONDecodeError:
-            return []
+            return [self._degraded(
+                Severity.MEDIUM,
+                "semgrep output was not valid JSON",
+                "semgrep output could not be parsed — AST-based taint analysis "
+                "results are missing from this report.",
+            )]
 
         findings = []
         for r in data.get("results", []):
@@ -105,7 +126,7 @@ class SemgrepScanner(BaseScanner):
             severity = _SEVERITY_MAP.get(sev_str, Severity.MEDIUM)
             path = r.get("path", "")
             line = r.get("start", {}).get("line", 1)
-            message = r.get("extra", {}).get("message", "").strip().splitlines()[0]
+            message = (r.get("extra", {}).get("message", "").strip().splitlines() or [""])[0]
             code_line = r.get("extra", {}).get("lines", "").strip()
 
             try:
