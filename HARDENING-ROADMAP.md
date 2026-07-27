@@ -145,6 +145,53 @@ both stored XSS lived in.*
 
 ---
 
+## Coverage & reporting fail-open (found 2026-07-27, kasp-site engagement)
+
+*Theme: the verdict can print PASSED while covering a fraction of a tree, the
+same class as a silent `except: return []` at the reporting layer. Found while
+scanning an Astro/JS client repo. New cluster; not yet placed in the chip order
+below (existing A/B ranking unchanged pending review).*
+
+- [ ] **Walker coverage gap.** `base.py` walks `.py` and `.ts` only
+  (`scanner/base.py:92-104`); on a non-Python tree the gate can scan a fraction
+  of the source and still print GATE PASSED, with the language-coverage note
+  printed below the verdict.
+- [ ] **SCA reports clean on dependencies it cannot see** (separate root cause
+  from the walker gap). `sca`/`deps` report clean on a tree containing a
+  `package-lock.json` they have no code to read: a scanner asserting a result it
+  cannot produce, not a coverage limitation. Proven on kasp-site (`sca` clean
+  while `npm audit` found real advisories on the same tree).
+- [ ] **JSON report carries no coverage field.** `security-gate-report.json`
+  asserts `"gate": "PASSED"` with no scope qualifier. This is the machine
+  artifact CI and clients consume.
+- [ ] **Fix (decision locked): coverage joins the verdict, or there is no
+  verdict.** PASSED is structurally unprintable without a coverage statement
+  attached; coverage becomes part of the verdict string. No floor, no threshold,
+  no dial (same reasoning as A1's no-grace-period decision).
+  *Done when:* no code path emits PASSED without a scanned-vs-total statement,
+  and the JSON report carries the same field.
+- [ ] **CSP meta-tag false positive.** `headers_check` reports "CSP header
+  missing" when CSP ships via `<meta http-equiv="content-security-policy">` (how
+  Astro's `security.csp` delivers it). Parse the document, not just response
+  headers.
+- [ ] **AI/LLM sign-off list fires on non-AI targets.** The manual sign-off list
+  demands HF model provenance and offline-inference verification on any target,
+  including a static marketing site. Scope items to detected project type.
+- [ ] **Path-case bypass risk (case-insensitive FS).** `~/Projects` and
+  `~/projects` resolve identically on macOS; harmless today, a vector if
+  scan-scope logic ever does path-prefix comparison.
+- [ ] **New scanner candidate: working-tree secret-file permissions.**
+  `secrets.py` scans git history; nothing checks the working tree. Nine `.env`
+  files found at 644 on 2026-07-27. Line-local and deterministic; a real-world
+  instance already in hand. Ships with a must-fire/must-not-fire fixture pair
+  (house rule).
+- [ ] **nis2-vendor-risk-framework outside the scanned tree.** Public repo never
+  covered by the fleet scan because it lives outside the scanned canonical tree;
+  also carries a known CI gap. Tree-split root cause tracked in
+  `DUPLICATE-TREES.md`.
+
+---
+
 ## Part C — Phase plan (after Parts A+B are done)
 
 *Each phase has an entry gate, not a start date. The entry gate for the whole
