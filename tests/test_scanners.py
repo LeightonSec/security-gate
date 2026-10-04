@@ -4,8 +4,10 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
 from security_gate.report.generator import gate_passed
+from security_gate.scanner.agent_context import validate_files_map
 from security_gate.scanner.ai_ml import AiMlScanner
 from security_gate.scanner.bare_suppress import BareSuppressScanner
 from security_gate.scanner.base import Severity
@@ -1570,3 +1572,19 @@ def test_httpx_without_timeout_not_flagged(tmp_path):
     f = tmp_path / "m.py"
     f.write_text("import httpx\nr = httpx.get(url)\n")
     assert HardcodedTimeoutScanner().scan(tmp_path) == []
+
+
+def test_validate_files_map_returns_files_mapping():
+    assert validate_files_map({"files": {"CLAUDE.md": {}}}) == {"CLAUDE.md": {}}
+
+
+def test_validate_files_map_rejects_non_object_manifest():
+    # regression: a valid-JSON non-object (list/int/str) must raise ValueError,
+    # not the uncaught AttributeError the old `.get` path produced.
+    with pytest.raises(ValueError):
+        validate_files_map([])
+
+
+def test_validate_files_map_rejects_non_dict_files_member():
+    with pytest.raises(ValueError):
+        validate_files_map({"files": "nope"})

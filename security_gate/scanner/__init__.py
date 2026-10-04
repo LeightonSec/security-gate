@@ -1,3 +1,4 @@
+from .agent_context import AgentContextScanner
 from .ai_ml import AiMlScanner
 from .bare_suppress import BareSuppressScanner
 from .base import Finding, Severity
@@ -43,4 +44,5 @@ ALL_SCANNERS = [
     SstiScanner,
     SsrfScanner,
     SemgrepScanner,
+    AgentContextScanner,
 ]
