@@ -192,6 +192,50 @@ below (existing A/B ranking unchanged pending review).*
 
 ---
 
+## SCA labels and counts (found 2026-10-13, fleet CVE sweep)
+
+*Theme: the SCA scanner finds the right advisories but reports them with the
+wrong severity, no summary, no fix version, and duplicated counts. It still
+blocks on everything it finds (it mislabels but never drops a finding), so the
+gate verdict holds; the per-finding labels and counts are not evidence. Not yet
+placed in the chip order below.*
+
+- [ ] **Severity mislabelled in both directions.** `sca.py:14` queries OSV
+  `/v1/querybatch`, which returns only `id` and `modified` per advisory. With
+  no `database_specific` in the response, `_map_severity` (`sca.py:76-80`)
+  falls back to HIGH for every finding: CRITICAL shown as HIGH
+  (GHSA-82r6-8w77-94w6, anyio 4.14.1, ai-firewall) as well as MODERATE shown as
+  HIGH (GHSA-g6x2-hccm-hh4m, werkzeug 3.1.8, intel-dashboard).
+- [ ] **Summary and fix version always empty.** Same root cause: querybatch
+  carries no `summary` or `affected`, so `_fix_version` (`sca.py:67-73`) returns
+  nothing and every finding prints as `<ID>: ` (`sca.py:170-173`).
+- [ ] **GHSA/PYSEC duplicates inflate counts.** `_canonical_id`
+  (`sca.py:57-64`) collapses aliases to a CVE or GHSA ID, but querybatch carries
+  no `aliases`, so it falls back to the raw `id` and both records of one CVE
+  pass the `seen` check (`sca.py:163-168`). `seen` is also reset per package per
+  file, so a package in two lockfiles reports each advisory twice. Observed:
+  dolphin-watch 8 findings for 4 issues; ai-firewall 14 findings for 4
+  advisories across 2 lockfiles.
+- [ ] **Tests never see the real response shape.** `tests/test_scanners.py`
+  mocks full OSV records (`:593`, `:611`, `:627` severity; `:643` fix version;
+  `:664` dedupe), so the suite passes on a shape the live endpoint does not
+  return.
+- [ ] **Fix (proposed, lock before code): hydrate, keep the fallback.** After
+  querybatch, fetch each distinct ID via `/v1/vulns/{id}` and map severity,
+  summary, fix version and aliases from the full record. If hydration fails for
+  an ID, keep the HIGH fallback for that finding (fail-closed: never drop or
+  downgrade it). Dedupe by canonical ID across lockfiles, reporting each
+  affected file once per advisory. Lock here before code: hydration timeout
+  budget, and whether a hydration failure also emits the Class D
+  "scan incomplete" finding (FAIL-OPEN-AUDIT.md).
+  *Done when:* a fixture with the real querybatch shape (`id` + `modified`
+  only) drives the tests; must-fire: a CRITICAL record maps to CRITICAL and a
+  MODERATE record to MEDIUM after hydration; must-not-fire: GHSA and PYSEC for
+  one CVE produce one finding; hydration failure yields HIGH, not a dropped
+  finding.
+
+---
+
 ## Part C — Phase plan (after Parts A+B are done)
 
 *Each phase has an entry gate, not a start date. The entry gate for the whole
