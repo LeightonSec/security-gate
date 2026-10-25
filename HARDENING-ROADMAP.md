@@ -233,6 +233,54 @@ placed in the chip order below.*
   MODERATE record to MEDIUM after hydration; must-not-fire: GHSA and PYSEC for
   one CVE produce one finding; hydration failure yields HIGH, not a dropped
   finding.
+- **Decisions locked 2026-10-25:**
+  - *Hydration timeout budget:* one shared `httpx.Client`, sequential
+    `GET /v1/vulns/{id}` per distinct advisory ID, 10s per request and 30s
+    total for the hydration pass. IDs not hydrated when the budget runs out
+    keep the HIGH fallback. Worst case adds 30s to the querybatch call.
+  - *Hydration failure reporting:* one MEDIUM finding per scan, following
+    Class D (`FAIL-OPEN-AUDIT.md`, `sca.py:137-156`): "OSV hydration
+    incomplete: N of M advisories kept fallback severity HIGH; summary and
+    fix version unavailable." Each affected finding's detail marks its
+    severity as a fallback. This MEDIUM is visibility only and never changes
+    the exit code on its own: hydration runs only when querybatch already
+    found advisories, and every advisory that failed hydration keeps a HIGH
+    finding that already blocks the gate (unless that HIGH is waived in
+    `accepted-findings.toml`).
+  - *Known limit:* on hydration failure a true CRITICAL shows as HIGH. It
+    still gates under the default profile, and the finding detail marks the
+    severity as a fallback.
+- [ ] **Partial querybatch results are silently dropped.** `sca.py:159-161`
+  iterates `results` and never checks it has one entry per query, so a
+  dependency OSV returned no result for produces no finding. Paged results
+  (`next_page_token`) are not read either; paged results unverified against
+  OSV docs.
+  - [ ] Check the OSV querybatch docs for result count and paging guarantees
+    before coding the hydration change.
+
+---
+
+## Agent-context scanner (#21) defects (found 2026-10-25, fixture pass)
+
+*Theme: the scanner fails closed on most inputs, but a few manifest shapes
+crash it or skip files silently. Not yet placed in the chip order below.*
+
+- [ ] **Malformed manifest entry crashes the gate (H1/H2).** `validate_files_map`
+  (`agent_context.py:227-240`) checks only the top level; a non-dict entry
+  raises AttributeError at `agent_context.py:300`, and a list `includes`
+  raises TypeError in `_describe_drift` (`agent_context.py:214`). `cli.py:60-62`
+  calls `scan()` with no try, so the run dies with a traceback and no report.
+- [ ] **Pinned files that drop out of tracking are skipped silently (H4).**
+  `agent_context.py:320-334` only checks that a pinned path exists; a pinned
+  file no longer matched by `TRACKED_GLOBS` or now under an excluded dir is
+  never hashed, and `agent_context.py:321` accepts `../` and absolute keys.
+- [ ] **Do not move the fleet pin past 42c6e8d until a manifest tool exists
+  (H6).** With no manifest every tracked file is HIGH
+  (`agent_context.py:373-374`, `:285-298`); 11 LeightonSec repos have a
+  CLAUDE.md, and the fleet pins c52a8b5.
+- [ ] **Docstring names a manifest init/update tool that does not exist.**
+  `agent_context.py:11-12` and `:143-145`; reword it or build the tool, as
+  its own commit.
 
 ---
 
