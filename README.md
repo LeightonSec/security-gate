@@ -27,6 +27,8 @@ This is the difference between a security scanner and a security gate: the gate 
 | `security_tool` | Test fixtures containing real attack payloads or path traversal strings — synthetic fixtures only |
 | `crypto` | Weak CSPRNG in crypto paths, unauthenticated GCM envelopes, HKDF undefined salt, silent catch blocks discarding auth failures, timing-unsafe secret comparison, sensitive key material in logs |
 
+This table covers 10 of the 21 scanners; every scanner is listed in [Scanners](#scanners) below.
+
 ## The crypto scanner that caught a live H2 finding
 
 v1.2 added a TypeScript-capable crypto scanner built from a Gate 0 manual audit of a post-quantum messaging protocol. Before a single fix was written, the scanner was run against the live codebase. It returned six production findings across seven files:
@@ -51,7 +53,7 @@ Every rule in the scanner was written from a finding first.
 
 ## DAST: the scanner that found a real bug
 
-v1.3 added a runtime scanner (`--url`) that fires against a live service alongside the static analysis pass. On the first real run against `llm-honeypot` — a Flask honeypot built in the same portfolio — it reported:
+The runtime scanner (`--url`) fires against a live service alongside the static analysis pass. On the first real run against `llm-honeypot`, a Flask honeypot built in the same portfolio, it reported:
 
 ```
 dast    1 findings
@@ -65,7 +67,7 @@ The scanner found a genuine gap in the system it was built alongside. That's wha
 
 ## What's not in scope — and why
 
-security-gate is intentionally narrow. It covers SAST and direct dependency SCA. It does not attempt runtime sandboxing, transitive dependency analysis, container scanning, or fuzzing. Each of those is a distinct discipline with better dedicated tools.
+security-gate is intentionally narrow. It covers SAST and SCA of pinned versions: `sca` checks every `==` pin in the `requirements*.txt` and `pyproject.toml` files it reads, so in a compiled lockfile it checks transitive packages too, but it does not resolve a dependency tree and does not check unpinned dependencies. Source scanning reads Python (.py) files; only two scanners read TypeScript (.ts): `crypto`, which reads TypeScript only, and `bare_suppress`, which reads both. It does not attempt runtime sandboxing, dependency-tree resolution, container scanning, or fuzzing. Each of those is a distinct discipline with better dedicated tools.
 
 The `# gate: ignore` suppression pattern exists because the scanner is not always right. When a finding is a false positive, the suppression requires a documented rationale inline — not a blanket exclusion, not a config file, a sentence at the callsite explaining why this specific instance is safe:
 
@@ -111,7 +113,7 @@ security-gate scan /path/to/repo --output json --save
 | `outbound_calls` | HTTP calls, Anthropic/OpenAI SDK, boto3 | HIGH |
 | `path_manipulation` | `sys.path.insert/append` | HIGH |
 | `unpinned_deps` | Missing version pins or hashes | HIGH/MEDIUM |
-| `sca` | Known CVEs in pinned PyPI deps — single OSV.dev batch query, deduplicates GHSA/PYSEC by CVE alias, surfaces fix version; covers requirements.txt and pyproject.toml | CRITICAL/HIGH/MEDIUM/LOW |
+| `sca` | Known vulnerabilities in `==` pins in `requirements*.txt` and `pyproject.toml`, via one OSV.dev batch query. Limits: the batch reply carries only advisory IDs and modified dates, so every advisory is reported as HIGH whatever its real severity, the summary is empty (the detail shows only the advisory ID), no fix version is shown, and GHSA and PYSEC records for the same CVE are reported as separate findings. Pins with extras (`pkg[x]==`) are skipped. If OSV cannot be reached, the result is one MEDIUM finding, which does not block. The fix is planned in HARDENING-ROADMAP.md, "SCA labels and counts (found 2026-10-13, fleet CVE sweep)". | HIGH (MEDIUM if OSV is unreachable) |
 | `hardcoded_secrets` | Insecure `getenv()` fallbacks, inline key assignments | CRITICAL/HIGH |
 | `retention_policy` | DB writes and file appends without TTL/purge logic | MEDIUM |
 | `missing_validation` | Attacker-controlled input reaching logic without a schema contract (recognises Pydantic models/validators in or around the call; manual guard clauses are not auto-cleared) | HIGH/CRITICAL |
@@ -120,7 +122,15 @@ security-gate scan /path/to/repo --output json --save
 | `ai_ml` | `from_pretrained()` without `revision=`, `trust_remote_code=True`, permissive HF telemetry | CRITICAL/HIGH/MEDIUM |
 | `web_app` | Debug mode, SQL injection, CORS wildcard, unauthenticated routes | CRITICAL/HIGH/MEDIUM |
 | `security_tool` | Path traversal and injection payload strings in test fixtures | MEDIUM |
-| `crypto` | Math.random in crypto paths, GCM without setAAD, HKDF undefined salt, silent catch in crypto context, timing-unsafe secret comparison, key material in logs | HIGH/MEDIUM/LOW |
+| `crypto` | Math.random in crypto paths, GCM without setAAD, HKDF undefined salt, silent catch in crypto context, timing-unsafe secret comparison, key material in logs; reads TypeScript (.ts) files only | HIGH/MEDIUM/LOW |
+| `llm_injection` | Flask `request` data assigned to a variable that reaches an LLM call (Anthropic or OpenAI create calls, `llm.predict`, `llm.invoke`, `chain.run`) later in the same function with no sanitiser in between; taint is not followed across functions | HIGH |
+| `git_history` | Secret patterns in any commit diff, found with `git log -G`: AWS access key IDs, OpenAI keys, GitHub tokens and Slack tokens (CRITICAL), `API_KEY=` and `SECRET_KEY=` assignments (HIGH); HIGH if the history cannot be scanned; INFO for a shallow clone | CRITICAL/HIGH/INFO |
+| `bare_suppress` | `# gate: ignore` or `// gate: ignore` with no rationale after it, in .py and .ts files | HIGH |
+| `cmd_injection` | `eval`/`exec` or `os.system` with a non-literal argument; `subprocess` run/Popen/call/check_output/check_call with `shell=True` within a 15-line window | CRITICAL |
+| `ssti` | `render_template_string` or `jinja2.Template` with a non-literal argument | CRITICAL |
+| `ssrf` | `requests`, `httpx` or `urllib.request` calls whose URL argument is not a string literal (aiohttp is not covered) | CRITICAL |
+| `semgrep` | Runs 4 bundled Python taint rules (LLM injection, command injection, SSRF, path traversal) through the semgrep CLI, following data through reassignment within one function; INFO if semgrep is not installed, MEDIUM if it fails | MEDIUM/INFO (does not block) |
+| `agent_context_integrity` | Agent-context files (CLAUDE.md, SKILL.md, prompt and agent-config files) whose content, with `@` imports expanded, does not match the SHA-256 pinned in `.agent-context-manifest.json`, or that are unpinned, missing, or import from outside the repo; INFO for text that reads like an instruction to the agent | CRITICAL/HIGH/INFO |
 | `dast` | Runtime: headers, debug mode, stack trace leakage, LLM detection rate, model artefact leakage | CRITICAL/HIGH/MEDIUM/INFO |
 
 ## DAST checks (requires `--url`)
@@ -164,6 +174,8 @@ run: security-gate scan . --exclude tests
 ```
 
 No `--no-exit-code` escape hatch — a CRITICAL or HIGH in the product source or dependency manifests blocks the build. `tests/` is excluded because `tests/fixtures/` deliberately contains malicious patterns to verify the scanners fire; gating them would be meaningless. Source self-matches (a scanner's own regex strings and docstring examples) are suppressed inline with `# gate: ignore - <reason>`, and the handful of remaining accepted findings are documented in `accepted-findings.toml` with a rationale and reviewer. The gate holds itself to its own standard.
+
+This CI runs on push and pull request to `main` only; there is no scheduled run. An advisory published for an already-pinned dependency is not reported until the next push or pull request.
 
 ## Framework alignment
 

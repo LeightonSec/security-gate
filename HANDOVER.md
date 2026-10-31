@@ -1,12 +1,12 @@
 # Security-Gate Audit — Session Handover
 
-**Date:** 2026-05-24  
+**Date:** dated snapshot; sections run from 2026-05-24 to 2026-06-30, and the counts in each heading are as of that heading's date.  
 **Scope:** Scanner improvements + portfolio-wide remediation (continued from 2026-05-22)  
-**Status:** Active — remediation in progress
+**Status:** Historical snapshot, not current state. As of 2026-10-31: 21 registered scanners (`security_gate/scanner/__init__.py`) and 218 local tests passing.
 
 ---
 
-## Scanner Improvements Shipped 2026-06-30 (180 tests, 17 file-based scanners + 4 semgrep taint rules)
+## Scanner Improvements Shipped 2026-06-30 (at that date: 180 tests, 17 file-based scanners + 4 semgrep taint rules)
 
 Hardened `missing_validation` and added two scanners plus one taint rule. Verified
 against the full portfolio (every LeightonSec repo + ai-firewall) before shipping.
@@ -72,7 +72,7 @@ re-pin; a non-gating MEDIUM surfaces the issue without that blast radius.
 
 ---
 
-## Scanner Improvements Shipped 2026-05-30 EOD (138/138 tests, 16 scanners total)
+## Scanner Improvements Shipped 2026-05-30 EOD (at that date: 138/138 tests, 16 scanners total)
 
 ### Additional scanners (session 2)
 - `bare_suppress` — HIGH: bare `# gate: ignore` with no rationale. `\s*$` anchor prevents false positives on docstring/string mentions of the syntax. Self-scan test enforces the codebase itself stays clean.

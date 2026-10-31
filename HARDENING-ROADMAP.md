@@ -40,7 +40,9 @@ in one sitting and has a definition of done. No item is done without its check.*
 ### A2. Detection ledger + honest-ceiling doc **[DOCS — may start pre-hire]**
 - [ ] `DETECTION-LEDGER.md`: every real finding (fleet-wide, any discovery method)
       recorded against *which check should have caught it* — automated / would-need-X / human-only.
-      Seed it retroactively: msgpack CVE (SCA ✓), XSS pair (human-only, cross-file taint),
+      Seed it retroactively: msgpack CVE (the SCA scanner flags msgpack 1.1.2 in the
+      pre-fix lockfile; CI did not catch it, because no CI run happened between the
+      advisory's publication and the fix), XSS pair (human-only, cross-file taint),
       2026-07-06 retrospective score (automated 0, fuzz-would-have 1, human-only 1).
 - [ ] Honest-ceiling doc: what the gate structurally cannot catch, stated plainly
       (line-local regex limits, no cross-file taint, no semantics). Claim-honesty
@@ -196,9 +198,10 @@ below (existing A/B ranking unchanged pending review).*
 
 *Theme: the SCA scanner finds the right advisories but reports them with the
 wrong severity, no summary, no fix version, and duplicated counts. It still
-blocks on everything it finds (it mislabels but never drops a finding), so the
-gate verdict holds; the per-finding labels and counts are not evidence. Not yet
-placed in the chip order below.*
+blocks on every advisory OSV returns (it mislabels but never drops one), so the
+gate verdict holds for those; results OSV does not return are a separate gap
+(see "Partial querybatch results" below). The per-finding labels and counts are
+not evidence. Not yet placed in the chip order below.*
 
 - [ ] **Severity mislabelled in both directions.** `sca.py:14` queries OSV
   `/v1/querybatch`, which returns only `id` and `modified` per advisory. With

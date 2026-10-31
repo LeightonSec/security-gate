@@ -148,7 +148,8 @@ def scan(
     console.print(
         "[dim]Note: scanners cover single-file scope — cross-function taint, "
         "cross-file configuration, and infrastructure controls require manual verification. "
-        "Language coverage: Python (.py) and TypeScript (.ts); JavaScript, Go, and other "
+        "Language coverage: Python (.py); TypeScript (.ts) is read only by the crypto "
+        "scanner (TypeScript only) and bare_suppress; JavaScript, Go, and other "
         "languages are not scanned.[/dim]\n"
     )
 
